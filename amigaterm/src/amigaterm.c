@@ -28,8 +28,9 @@
 void sendchar(int ch);            // AF
 void emits(char string[]);        // AF
 void emit(char c);                // AF
-void filename(char name[]);       // AF
-int XMODEM_Read_File(char *file); // AF
+void filename(char name[], int len); // AF
+long filesize(void);               // Read a file size, or default to -1
+int XMODEM_Read_File(char *file, long size); // AF
 int XMODEM_Send_File(char *file); // AF
 #define DOS_REV 1
 #define INTUITION_REV 1
@@ -44,6 +45,10 @@ int XMODEM_Send_File(char *file); // AF
 #define EOT 4          /* end of transmission char */
 #define ACK 6          /* acknowledge sector transmission */
 #define NAK 21         /* error in transmission detected */
+
+/* Whether to use hardware flow control or not */
+#define ENABLE_HWFLOW  1
+
 static char bufr[BufSize];
 static int timeout = FALSE;
 static long bytes_xferred;
@@ -231,6 +236,7 @@ int main() {
   USHORT code, menunum, itemnum;
   int KeepGoing, capture, send;
   char c, name[32];
+  long file_size;
   FILE *tranr = NULL;
   FILE *trans = NULL;
   IntuitionBase = (struct IntuitionBase *)OpenLibrary(
@@ -252,6 +258,9 @@ int main() {
   Read_Request = (struct IOExtSer *)AllocMem(sizeof(*Read_Request),
                                              MEMF_PUBLIC | MEMF_CLEAR);
   Read_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
+#if ENABLE_HWFLOW
+  Read_Request->io_SerFlags |= SERF_7WIRE;
+#endif
   Read_Request->IOSer.io_Message.mn_ReplyPort =
       CreatePort((CONST_STRPTR) "Read_RS", 0);
   if (OpenDevice((CONST_STRPTR)SERIALNAME, 0, (struct IORequest *)Read_Request,
@@ -268,6 +277,9 @@ int main() {
   Write_Request = (struct IOExtSer *)AllocMem(sizeof(*Write_Request),
                                               MEMF_PUBLIC | MEMF_CLEAR);
   Write_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
+#if ENABLE_HWFLOW
+  Write_Request->io_SerFlags |= SERF_7WIRE;
+#endif
   Write_Request->IOSer.io_Message.mn_ReplyPort =
       CreatePort((CONST_STRPTR) "Write_RS", 0);
   if (OpenDevice((CONST_STRPTR)SERIALNAME, 0, (struct IORequest *)Write_Request,
@@ -283,8 +295,10 @@ int main() {
   Write_Request->IOSer.io_Command = CMD_WRITE;
   Write_Request->IOSer.io_Length = 1;
   Write_Request->IOSer.io_Data = (APTR)&rs_out[0];
-  /*Read_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED | SERF_7WIRE;*/
   Read_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
+#if ENABLE_HWFLOW
+  Read_Request->io_SerFlags |= SERF_7WIRE;
+#endif
   Read_Request->io_Baud = 9600;
   Read_Request->io_ReadLen = 8;
   Read_Request->io_WriteLen = 8;
@@ -343,7 +357,11 @@ int main() {
           emits("AMIGA Term Enhanced 2018-2021 by Roc Vall\xe8s Dom\xe8nech\n");
           emits("AMIGA Term Copyright 1985 by Michael Mounier\n");
           emits("Contributors: Alexander Fritsch (2021)\n");
+#if ENABLE_HWFLOW
+          emits("***This program is configured to USE HW flow control\n");
+#else
           emits("***This program doesn't use flow control\n");
+#endif
           emits("***ESC Aborts Xmodem Xfer\n");
           break;
         default:
@@ -372,7 +390,7 @@ int main() {
                 emits("\nEnd File Capture\n");
               } else {
                 emits("\nAscii Capture:");
-                filename(name);
+                filename(name, 31);
                 if ((tranr = fopen(name, "w")) == 0) {
                   capture = FALSE;
                   emits("\nError Opening File\n");
@@ -388,7 +406,7 @@ int main() {
                 emits("\nFile Send Cancelled\n");
               } else {
                 emits("\nAscii Send:");
-                filename(name);
+                filename(name, 31);
                 if ((trans = fopen(name, "r")) == 0) {
                   send = FALSE;
                   emits("\nError Opening File\n");
@@ -399,8 +417,10 @@ int main() {
               break;
             case 2:
               emits("\nXmodem Receive:");
-              filename(name);
-              if (XMODEM_Read_File(name)) {
+              filename(name, 31);
+              emits("\nFile size (or leave blank to not truncate):");
+              file_size = filesize();
+              if (XMODEM_Read_File(name, file_size)) {
                 emits("Received\n");
                 emit(8);
               } else {
@@ -411,7 +431,7 @@ int main() {
               break;
             case 3:
               emits("\nXmodem Send:");
-              filename(name);
+              filename(name, 31);
               if (XMODEM_Send_File(name)) {
                 emits("Sent\n");
                 emit(8);
@@ -480,7 +500,7 @@ int main() {
 /*************************************************
  *  function to get file name
  *************************************************/
-void filename(char name[]) {
+void filename(char name[], int len) {
   char c;
   ULONG class;
   USHORT code;
@@ -492,7 +512,7 @@ void filename(char name[]) {
       class = NewMessage->Class;
       code = NewMessage->Code;
       ReplyMsg((struct Message *)NewMessage);
-      if (class == RAWKEY) { // AF Achtung, Fehler! -->  ==
+      if ((i < len) && (class == RAWKEY)) { // AF Achtung, Fehler! -->  ==
         c = toasc(code);
         name[i] = c;
         if (name[i] != 0) {
@@ -514,11 +534,25 @@ void filename(char name[]) {
           }
           i += 1;
         }
-      }
+      } /* end of RAWKEY check */
     } /* end of new message loop */
   }   /* end of god knows what */
   emit(13);
 } /* end of function */
+
+/* Function to get a file size, or -1 if enter is pressed */
+long filesize(void)
+{
+  char name[32];
+  long val;
+
+  filename(name, 31);
+  if ((name[0] == 0) || (name[0] == 13))
+    return -1L;
+  val = strtol(name, NULL, 10);
+  return (val);
+}
+
 /********************************/
 /*  function to print a string */
 /******************************/
@@ -568,12 +602,35 @@ static unsigned char readchar() {
   c = ch;
   return c;
 }
+
+/*
+ * Figure out how many bytes we need to write for this particular
+ * transfer.  If file_size is 0 or -1 then it's always the block
+ * size, else we ensure only enough bytes are written to satisfy
+ * file_size.
+ */
+static int
+get_bytes_for_transfer(long file_size, long file_offset, int block_size)
+{
+  long bw;
+
+  if (file_size < 1)
+    return block_size;
+
+  bw = file_size - file_offset;
+  if (bw < block_size)
+    return bw;
+  return block_size;
+}
+
 /***************************************/
 /*  xmodem send and receive functions */
 /*************************************/
-int XMODEM_Read_File(char *file) {
+int XMODEM_Read_File(char *file, long file_size) {
   int firstchar, sectnum, sectcurr, sectcomp, errors, errorflag;
   unsigned int checksum, j, bufptr;
+  long file_offset = 0L;
+  int bw;
   bytes_xferred = 0L;
   if ((fh = Open((UBYTE *)file, MODE_NEWFILE)) < 0) {
     emits("Cannot Open File\n");
@@ -622,10 +679,12 @@ int XMODEM_Read_File(char *file) {
             /*emits("+");*/
             if (bufptr == BufSize) {
               bufptr = 0;
-              if (Write(fh, bufr, BufSize) == EOF) {
+              bw = get_bytes_for_transfer(file_size, file_offset, BufSize);
+              if ((bw > 0) && (Write(fh, bufr, bw) == EOF)) {
                 emits("\nError Writing File\n");
                 return FALSE;
               };
+              file_offset += bw;
             };
             sendchar(ACK);
           } else {
@@ -651,7 +710,9 @@ int XMODEM_Read_File(char *file) {
   }; /* end while */
   if ((firstchar == EOT) && (errors < ERRORMAX)) {
     sendchar(ACK);
-    Write(fh, bufr, bufptr);
+    bw = get_bytes_for_transfer(file_size, file_offset, bufptr);
+    if (bw > 0)
+        Write(fh, bufr, bw);
     Close(fh);
     return TRUE;
   }
