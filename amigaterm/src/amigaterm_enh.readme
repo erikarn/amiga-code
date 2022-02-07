@@ -1,0 +1,50 @@
+Short:        Serial port ANSI Terminal from 1985, enhanced
+Uploader:     vallesroc@gmail.com (Roc Vallès Domènech)
+Author:       Roc Vallès Domènech, original by Michael Mounier
+Type:         comm/term
+Version:      1.2
+Architecture: m68k-amigaos >= 1.1
+Distribution: NoCD
+
+Modified version of this nifty old terminal that runs on any Amiga with any
+AmigaOS version.
+
+Included:
+- amigaterm (target aos68k, 2.04+)
+- amigaterm_020 (target aos68k with cpu=68O2O, 2.04+)
+- amigaterm_kick13 (target nix13, 1.1+)
+- Source code.
+
+
+*** Version History
+Miniterm Enhanced 1.2 (2021-04-26)
+- Add Makefile.
+- Binaries built with gcc 6.5 from bebbo/amiga-gcc toolchain.
+- Reformatted source with llvm-format (llvm style).
+- Alexander Fritsch: Fixed =/== bug from original version.
+- Alexander Fritsch: Fixed all gcc warnings with -Wall and --pedantic enabled.
+
+Miniterm Enhanced 1.1 +src (2021-03-30)
+- Actually include source code. (forgot to add, someone poked me about it)
+
+Miniterm Enhanced 1.1 (2018-10-08)
+- Removed SAS/C non-ANSI standard library stci_d() calls.
+- Removed POSIX calls and replaced with dos.library calls enabling build
+  without a POSIX library such as dev/c/vbcc_PosixLib.
+- Disabled progress output during xmodem, exchanged for receive/send 2x as
+  fast on an unexpanded 68k Amiga. Sends at 9600baud (not that impressive) on
+  an A500.
+- Added options for 19200, 38400, 57600, 115200 baud.
+- New default 9600 baud.
+- Helpful HELP key text on lack of flow control.
+- Binaries built with vbcc 0.9f patch 1.
+- AmigaOS 1.0 support lost. It might be possible to recover with the right
+  compiler and headers.
+
+Miniterm 1.0 (1985-12-16, Michael Mounier)
+- Originally posted in USENET.
+- comm/term/amigaterm.lha in Aminet.
+
+
+*** Other Amiga projects from me
+- comm/misc/amigaXfer_win32: Easy GUI for Serial file/floppy transfer
