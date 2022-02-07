@@ -1,0 +1,5 @@
+TODO
+====
+
+* Make the size configurable, rather than 128 bytes.
+  128 bytes matches the default xmodem settings fine.
