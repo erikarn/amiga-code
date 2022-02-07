@@ -7,7 +7,8 @@
    if a particular load file ends with anything besides HUNK_END.
 */
 
-#include <lattice/stdio.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 /* constant definitions */
 
@@ -16,15 +17,13 @@
 #define BYTEBITS (8)
 #define ENDOFFSET (2)
 
-main(argc,argv)
-int argc;
-char *argv[];
+int
+main(int argc, char *argv[])
 {
-  FILE *rdptr,*wrtptr,*fopen();
+  FILE *rdptr,*wrtptr;
   int pos;
   unsigned int media;
   long ctr;
-
 
   if (argc!=3) {
     printf("Usage : fixobj srcfile destfile\n");
