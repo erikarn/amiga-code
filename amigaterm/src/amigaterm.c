@@ -25,7 +25,9 @@
 #include <intuition/intuition.h>  // for MenuItem, IntuiText, Menu, Window
 #include <intuition/screens.h>    // for RAWKEY, CLOSEWINDOW, MENUPICK
 #include <stdio.h>                // for NULL, puts, fclose, fopen, EOF, getc
-void sendchar(int ch);            // AF
+
+#include "amigaterm_serial.h"
+
 void emits(char string[]);        // AF
 void emit(char c);                // AF
 void filename(char name[], int len); // AF
@@ -45,9 +47,6 @@ int XMODEM_Send_File(char *file); // AF
 #define EOT 4          /* end of transmission char */
 #define ACK 6          /* acknowledge sector transmission */
 #define NAK 21         /* error in transmission detected */
-
-/* Whether to use hardware flow control or not */
-#define ENABLE_HWFLOW  1
 
 static char bufr[BufSize];
 static int timeout = FALSE;
@@ -220,12 +219,7 @@ int InitMenu() {
   menu[1].FirstItem = &RSItem[0];        /* pointer to first item in list */
   return 0;
 }
-/* declarations for the serial stuff */
-extern struct MsgPort *CreatePort();
-struct IOExtSer *Read_Request;
-static char rs_in[2];
-struct IOExtSer *Write_Request;
-static char rs_out[2];
+
 /******************************************************/
 /*                   Main Program                     */
 /*                                                    */
@@ -234,7 +228,7 @@ static char rs_out[2];
 int main() {
   ULONG class;
   USHORT code, menunum, itemnum;
-  int KeepGoing, capture, send;
+  int KeepGoing, capture, send, baud;
   char c, name[32];
   long file_size;
   FILE *tranr = NULL;
@@ -255,57 +249,13 @@ int main() {
     puts("Can't open window\n");
     exit(TRUE);
   }
-  Read_Request = (struct IOExtSer *)AllocMem(sizeof(*Read_Request),
-                                             MEMF_PUBLIC | MEMF_CLEAR);
-  Read_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
-#if ENABLE_HWFLOW
-  Read_Request->io_SerFlags |= SERF_7WIRE;
-#endif
-  Read_Request->IOSer.io_Message.mn_ReplyPort =
-      CreatePort((CONST_STRPTR) "Read_RS", 0);
-  if (OpenDevice((CONST_STRPTR)SERIALNAME, 0, (struct IORequest *)Read_Request,
-                 0)) {
-    puts("Can't open Read device\n");
+
+  if (! serial_init()) {
+    puts("couldn't init serial\n");
     CloseWindow(mywindow);
-    DeletePort(Read_Request->IOSer.io_Message.mn_ReplyPort);
-    FreeMem(Read_Request, sizeof(*Read_Request));
     exit(TRUE);
   }
-  Read_Request->IOSer.io_Command = CMD_READ;
-  Read_Request->IOSer.io_Length = 1;
-  Read_Request->IOSer.io_Data = (APTR)&rs_in[0];
-  Write_Request = (struct IOExtSer *)AllocMem(sizeof(*Write_Request),
-                                              MEMF_PUBLIC | MEMF_CLEAR);
-  Write_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
-#if ENABLE_HWFLOW
-  Write_Request->io_SerFlags |= SERF_7WIRE;
-#endif
-  Write_Request->IOSer.io_Message.mn_ReplyPort =
-      CreatePort((CONST_STRPTR) "Write_RS", 0);
-  if (OpenDevice((CONST_STRPTR)SERIALNAME, 0, (struct IORequest *)Write_Request,
-                 0)) {
-    puts("Can't open Write device\n");
-    CloseWindow(mywindow);
-    DeletePort(Write_Request->IOSer.io_Message.mn_ReplyPort);
-    FreeMem(Write_Request, sizeof(*Write_Request));
-    DeletePort(Read_Request->IOSer.io_Message.mn_ReplyPort);
-    FreeMem(Read_Request, sizeof(*Read_Request));
-    exit(TRUE);
-  }
-  Write_Request->IOSer.io_Command = CMD_WRITE;
-  Write_Request->IOSer.io_Length = 1;
-  Write_Request->IOSer.io_Data = (APTR)&rs_out[0];
-  Read_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
-#if ENABLE_HWFLOW
-  Read_Request->io_SerFlags |= SERF_7WIRE;
-#endif
-  Read_Request->io_Baud = 9600;
-  Read_Request->io_ReadLen = 8;
-  Read_Request->io_WriteLen = 8;
-  Read_Request->io_CtlChar = 1L;
-  Read_Request->IOSer.io_Command = SDCMD_SETPARAMS;
-  DoIO((struct IORequest *)Read_Request);
-  Read_Request->IOSer.io_Command = CMD_READ;
+
   InitFileItems();
   InitRSItems();
   InitMenu();
@@ -315,29 +265,46 @@ int main() {
   send = FALSE;
   SetAPen(mywindow->RPort, 1);
   emit(12);
-  BeginIO((struct IORequest *)Read_Request);
+
+  /* Start a single byte serial read */
+  serial_read_start();
+
   while (KeepGoing) {
-    /* wait for window message or serial port message */
-    Wait((1 << Read_Request->IOSer.io_Message.mn_ReplyPort->mp_SigBit) |
-         (1 << mywindow->UserPort->mp_SigBit));
+    /*
+     * wait for window message or serial port message
+     *
+     * if we are using QUICK IO then we can be already ready
+     * to read, but we'll get no notification signal.
+     * So skip the Wait().
+     */
+    if (serial_read_is_ready() == 0) {
+      Wait((serial_get_signal_bitmask()) |
+           (1 << mywindow->UserPort->mp_SigBit));
+    }
     if (send) {
       if ((c = getc(trans)) != EOF)
-        sendchar(c);
+        serial_write_char(c);
       else {
         fclose(trans);
         emits("\nFile Sent\n");
         send = FALSE;
       }
     }
-    if (CheckIO((struct IORequest *)Read_Request)) {
-      WaitIO((struct IORequest *)Read_Request);
-      c = rs_in[0] & 0x7f;
-      BeginIO((struct IORequest *)Read_Request);
-      emit(c);
-      if (capture)
-        if ((c > 31 && c < 127) || c == 10) /* trash them mangy ctl chars */
-          putc(c, tranr);
+
+    /* See if we have a serial read IO ready */
+    c = serial_get_char();
+    if (c >= 0) {
+        /* Start another serial port read */
+        serial_read_start();
+
+        c = c & 0x7f;
+        emit(c);
+        if (capture) {
+          if ((c > 31 && c < 127) || c == 10) /* trash them mangy ctl chars */
+            putc(c, tranr);
+        }
     }
+
     while ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
       class = NewMessage->Class;
       code = NewMessage->Code;
@@ -367,8 +334,7 @@ int main() {
         default:
           c = toasc(code); /* get in into ascii */
           if (c != 0) {
-            rs_out[0] = c;
-            DoIO((struct IORequest *)Write_Request);
+            serial_write_char(c);
           }
           break;
         }
@@ -443,56 +409,58 @@ int main() {
               break;
             }
             break;
-          case 1:
-            AbortIO((struct IORequest *)Read_Request);
+          case 1: /* Set baud rate */
+            /* XXX TODO: why not just make this a table? */
             switch (itemnum) {
             case 0:
-              Read_Request->io_Baud = 300;
+              baud = 300;
               break;
             case 1:
-              Read_Request->io_Baud = 1200;
+              baud = 1200;
               break;
             case 2:
-              Read_Request->io_Baud = 2400;
+              baud = 2400;
               break;
             case 3:
-              Read_Request->io_Baud = 4800;
+              baud = 4800;
               break;
             case 4:
-              Read_Request->io_Baud = 9600;
+              baud = 9600;
               break;
             case 5:
-              Read_Request->io_Baud = 19200;
+              baud = 19200;
               break;
             case 6:
-              Read_Request->io_Baud = 38400;
+              baud = 38400;
               break;
             case 7:
-              Read_Request->io_Baud = 57600;
+              baud = 57600;
               break;
             case 8:
-              Read_Request->io_Baud = 115200;
+              baud = 115200;
+              break;
+            default:
+              baud = 300; /* XXX */
               break;
             }
-            Read_Request->IOSer.io_Command = SDCMD_SETPARAMS;
-            DoIO((struct IORequest *)Read_Request);
-            Read_Request->IOSer.io_Command = CMD_READ;
-            BeginIO((struct IORequest *)Read_Request);
+
+            /* Abort the pending read IO, then set the serial baud */
+            serial_read_abort();
+            serial_set_baud(baud);
+
+            /* Start a new read IO */
+            serial_read_start();
             break;
           } /* end of switch ( menunum ) */
         }   /*  end of if ( not null ) */
       }     /* end of switch (class) */
     }       /* end of while ( newmessage )*/
   }         /* end while ( keepgoing ) */
+
   /*   It must be time to quit, so we have to clean
    *   up and exit.
    */
-  CloseDevice((struct IORequest *)Read_Request);
-  DeletePort(Read_Request->IOSer.io_Message.mn_ReplyPort);
-  FreeMem(Read_Request, sizeof(*Read_Request));
-  CloseDevice((struct IORequest *)Write_Request);
-  DeletePort(Write_Request->IOSer.io_Message.mn_ReplyPort);
-  FreeMem(Write_Request, sizeof(*Write_Request));
+  serial_close();
   ClearMenuStrip(mywindow);
   CloseWindow(mywindow);
   exit(FALSE);
@@ -568,26 +536,29 @@ void emits(char string[]) {
     i += 1;
   }
 }
+
 /***************************************************************/
 /*  send char and read char functions for the xmodem function */
 /*************************************************************/
-void sendchar(int ch) {
-  rs_out[0] = ch;
-  DoIO((struct IORequest *)Write_Request);
-}
 static unsigned char readchar() {
   unsigned char c;
   int rd, ch = 0;
   rd = FALSE;
   while (rd == FALSE) {
-    Wait((1 << Read_Request->IOSer.io_Message.mn_ReplyPort->mp_SigBit) |
-         (1 << mywindow->UserPort->mp_SigBit));
-    if (CheckIO((struct IORequest *)Read_Request)) {
-      WaitIO((struct IORequest *)Read_Request);
-      ch = rs_in[0];
-      rd = TRUE;
-      BeginIO((struct IORequest *)Read_Request);
+    /* Don't wait here if the serial port is using QUICK and is ready */
+    if (serial_read_is_ready() == 0) {
+        Wait(serial_get_signal_bitmask() |
+             (1 << mywindow->UserPort->mp_SigBit));
     }
+    ch = serial_get_char();
+    if (ch == -1) {
+      // For now ensure we return 0 like we would've before
+      ch = 0;
+    } else {
+      rd = TRUE;
+      serial_read_start();
+    }
+
     if ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort)))
       if ((NewMessage->Class) == RAWKEY)
         if ((NewMessage->Code) == 69) {
@@ -639,7 +610,7 @@ int XMODEM_Read_File(char *file, long file_size) {
     emits("Receiving File...");
   timeout = FALSE;
   sectnum = errors = bufptr = 0;
-  sendchar(NAK);
+  serial_write_char(NAK);
   firstchar = 0;
   while (firstchar != EOT && errors != ERRORMAX) {
     errorflag = FALSE;
@@ -649,12 +620,7 @@ int XMODEM_Read_File(char *file, long file_size) {
         return FALSE;
     } while (firstchar != SOH && firstchar != EOT);
     if (firstchar == SOH) {
-      /*emits("Getting Block ");*/
-      /*stci_d(numb,sectnum,i);*/
-      /*snprintf(numb, 10, "%u", sectnum);*/
-      /*emits(numb);*/
-      /*emits("...");*/
-      /*emits("-");*/
+      /* Read the current sector and its inverted value */
       sectcurr = readchar();
       if (timeout == TRUE)
         return FALSE;
@@ -662,21 +628,23 @@ int XMODEM_Read_File(char *file, long file_size) {
       if (timeout == TRUE)
         return FALSE;
       if ((sectcurr + sectcomp) == 255) {
+        /* Check to see if this sector is the next we're expecting */
         if (sectcurr == ((sectnum + 1) & 0xff)) {
           checksum = 0;
+          /* Read the 128 byte data block */
           for (j = bufptr; j < (bufptr + SECSIZ); j++) {
             bufr[j] = readchar();
             if (timeout == TRUE)
               return FALSE;
             checksum = (checksum + bufr[j]) & 0xff;
           }
+          /* Read / check checksum */
           if (checksum == readchar()) {
             errors = 0;
             sectnum++;
             bufptr += SECSIZ;
             bytes_xferred += SECSIZ;
-            /*emits("verified\n");*/
-            /*emits("+");*/
+            /* Verified! */
             if (bufptr == BufSize) {
               bufptr = 0;
               bw = get_bytes_for_transfer(file_size, file_offset, BufSize);
@@ -686,7 +654,7 @@ int XMODEM_Read_File(char *file, long file_size) {
               };
               file_offset += bw;
             };
-            sendchar(ACK);
+            serial_write_char(ACK);
           } else {
             errorflag = TRUE;
             if (timeout == TRUE)
@@ -695,7 +663,7 @@ int XMODEM_Read_File(char *file, long file_size) {
         } else {
           if (sectcurr == (sectnum & 0xff)) {
             emits("\nReceived Duplicate Sector\n");
-            sendchar(ACK);
+            serial_write_char(ACK);
           } else
             errorflag = TRUE;
         }
@@ -705,11 +673,11 @@ int XMODEM_Read_File(char *file, long file_size) {
     if (errorflag == TRUE) {
       errors++;
       emits("\nError\n");
-      sendchar(NAK);
+      serial_write_char(NAK);
     }
   }; /* end while */
   if ((firstchar == EOT) && (errors < ERRORMAX)) {
-    sendchar(ACK);
+    serial_write_char(ACK);
     bw = get_bytes_for_transfer(file_size, file_offset, bufptr);
     if (bw > 0)
         Write(fh, bufr, bw);
@@ -747,19 +715,19 @@ int XMODEM_Send_File(char *file) {
     while (bytes_to_send > 0 && attempts != RETRYMAX) {
       attempts = 0;
       do {
-        sendchar(SOH);
-        sendchar(sectnum);
-        sendchar(~sectnum);
+        serial_write_char(SOH);
+        serial_write_char(sectnum);
+        serial_write_char(~sectnum);
         checksum = 0;
         size = SECSIZ <= bytes_to_send ? SECSIZ : bytes_to_send;
         bytes_to_send -= size;
         for (j = bufptr; j < (bufptr + SECSIZ); j++)
           if (j < (bufptr + size)) {
-            sendchar(bufr[j]);
+            serial_write_char(bufr[j]);
             checksum += bufr[j];
           } else
-            sendchar(0);
-        sendchar(checksum & 0xff);
+            serial_write_char(0);
+        serial_write_char(checksum & 0xff);
         attempts++;
         c = readchar();
         if (timeout == TRUE)
@@ -782,7 +750,7 @@ int XMODEM_Send_File(char *file) {
   } else {
     attempts = 0;
     do {
-      sendchar(EOT);
+      serial_write_char(EOT);
       attempts++;
     } while ((readchar() != ACK) && (attempts != RETRYMAX) &&
              (timeout == FALSE));
