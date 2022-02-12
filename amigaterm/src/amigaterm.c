@@ -27,6 +27,7 @@
 #include <stdio.h>                // for NULL, puts, fclose, fopen, EOF, getc
 
 #include "amigaterm_serial.h"
+#include "amigaterm_util.h"
 
 void emits(char string[]);        // AF
 void emit(char c);                // AF
@@ -79,8 +80,7 @@ struct NewWindow NewWindow = {
 };
 struct Window *mywindow;         /* ptr to applications window */
 struct IntuiMessage *NewMessage; /* msg structure for GetMsg() */
-static char toasc(USHORT code);  // AF
-static unsigned char readchar();
+static unsigned char readchar(void);
 /*****************************************************
  *                     File Menu
  *****************************************************/
@@ -540,7 +540,7 @@ void emits(char string[]) {
 /***************************************************************/
 /*  send char and read char functions for the xmodem function */
 /*************************************************************/
-static unsigned char readchar() {
+static unsigned char readchar(void) {
   unsigned char c;
   int rd, ch = 0;
   rd = FALSE;
@@ -597,6 +597,13 @@ get_bytes_for_transfer(long file_size, long file_offset, int block_size)
 /***************************************/
 /*  xmodem send and receive functions */
 /*************************************/
+
+/*
+ * Xmodem receive.
+ *
+ * This doesn't at /all/ handle missing characters from the stream,
+ * any form of timeout/resyncing the streams, etc.
+ */
 int XMODEM_Read_File(char *file, long file_size) {
   int firstchar, sectnum, sectcurr, sectcomp, errors, errorflag;
   unsigned int checksum, j, bufptr;
@@ -632,6 +639,7 @@ int XMODEM_Read_File(char *file, long file_size) {
         if (sectcurr == ((sectnum + 1) & 0xff)) {
           checksum = 0;
           /* Read the 128 byte data block */
+          /* This is the thing we want to highly optimise serial reading for! */
           for (j = bufptr; j < (bufptr + SECSIZ); j++) {
             bufr[j] = readchar();
             if (timeout == TRUE)
@@ -841,134 +849,3 @@ void emit(char c) {
   RectFill(mywindow->RPort, cx - 7, cy - 6, cx, cy + 1);
   SetAPen(mywindow->RPort, 1);
 }
-/*************************************************
- *  function to take raw key data and convert it
- *  into ascii chars
- **************************************************/
-static char toasc(USHORT code) {
-  static int ctrl = FALSE;
-  static int shift = FALSE;
-  static int capsl = FALSE;
-  char c;
-  static char keys[75] = {
-      '`',  '1',  '2', '3',  '4', '5', '6', '7', '8', '9', '0', '-', '=',
-      '\\', 0,    '0', 'q',  'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
-      '[',  ']',  0,   '1',  '2', '3', 'a', 's', 'd', 'f', 'g', 'h', 'j',
-      'k',  'l',  ';', '\'', 0,   0,   '4', '5', '6', 0,   'z', 'x', 'c',
-      'v',  'b',  'n', 'm',  44,  '.', '/', 0,   '.', '7', '8', '9', ' ',
-      8,    '\t', 13,  13,   27,  127, 0,   0,   0,   '-'};
-  switch (
-      code) { /* I didn't know about the Quilifier field when I write this */
-  case 98:
-    capsl = TRUE;
-    c = 0;
-    break;
-  case 226:
-    capsl = FALSE;
-    c = 0;
-    break;
-  case 99:
-    ctrl = TRUE;
-    c = 0;
-    break;
-  case 227:
-    ctrl = FALSE;
-    c = 0;
-    break;
-  case 96:
-  case 97:
-    shift = TRUE;
-    c = 0;
-    break;
-  case 224:
-  case 225:
-    shift = FALSE;
-    c = 0;
-    break;
-  default:
-    if (code < 75)
-      c = keys[code];
-    else
-      c = 0;
-  }
-  /* add modifiers to the keys */
-  if (c != 0) {
-    if (ctrl && (c <= 'z') && (c >= 'a'))
-      c -= 96;
-    else if (shift) {
-      if ((c <= 'z') && (c >= 'a'))
-        c -= 32;
-      else
-        switch (c) {
-        case '[':
-          c = '{';
-          break;
-        case ']':
-          c = '}';
-          break;
-        case '\\':
-          c = '|';
-          break;
-        case '\'':
-          c = '"';
-          break;
-        case ';':
-          c = ':';
-          break;
-        case '/':
-          c = '?';
-          break;
-        case '.':
-          c = '>';
-          break;
-        case ',':
-          c = '<';
-          break;
-        case '`':
-          c = '~';
-          break;
-        case '=':
-          c = '+';
-          break;
-        case '-':
-          c = '_';
-          break;
-        case '1':
-          c = '!';
-          break;
-        case '2':
-          c = '@';
-          break;
-        case '3':
-          c = '#';
-          break;
-        case '4':
-          c = '$';
-          break;
-        case '5':
-          c = '%';
-          break;
-        case '6':
-          c = '^';
-          break;
-        case '7':
-          c = '&';
-          break;
-        case '8':
-          c = '*';
-          break;
-        case '9':
-          c = '(';
-          break;
-        case '0':
-          c = ')';
-          break;
-        default:; // AF
-        }         /* end switch */
-    }             /* end shift */
-    else if (capsl && (c <= 'z') && (c >= 'a'))
-      c -= 32;
-  } /* end modifiers */
-  return c;
-} /* end of routine */
-/* end of file */

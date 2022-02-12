@@ -9,7 +9,9 @@ amigaterm.o: amigaterm.c
 
 amigaterm_serial.o: amigaterm_serial.c
 
-amigaterm: amigaterm.o amigaterm_serial.o
+amigaterm_util.o: amigaterm_util.c
+
+amigaterm: amigaterm.o amigaterm_serial.o amigaterm_util.o
 
 clean:
 	$(RM) -f amigaterm amigaterm.o amigaterm_serial.o
