@@ -540,7 +540,7 @@ void emits(char string[]) {
 /***************************************************************/
 /*  send char and read char functions for the xmodem function */
 /*************************************************************/
-static unsigned char readchar(void) {
+static unsigned char readchar_sched(int schedule_next) {
   unsigned char c;
   int rd, ch = 0;
   rd = FALSE;
@@ -556,15 +556,20 @@ static unsigned char readchar(void) {
       ch = 0;
     } else {
       rd = TRUE;
-      serial_read_start();
+      if (schedule_next) {
+          serial_read_start();
+      }
+      break;
     }
 
-    if ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort)))
-      if ((NewMessage->Class) == RAWKEY)
+    if ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
+      if ((NewMessage->Class) == RAWKEY) {
         if ((NewMessage->Code) == 69) {
           emits("\nUser Cancelled Transfer");
           break;
         }
+      }
+    }
   }
   if (rd == FALSE) {
     timeout = TRUE;
@@ -572,6 +577,110 @@ static unsigned char readchar(void) {
   }
   c = ch;
   return c;
+}
+
+static unsigned char
+readchar(void)
+{
+    return readchar_sched(1);
+}
+
+/*
+ * Read 'len' bytes into the given buffer.
+ *
+ * Return len if OK, -1 if timeout / cancellation.
+ *
+ * This is a bit dirty for now because of how the current xmodem
+ * receive path is written.  readchar() (a) expects a single byte
+ * read is already scheduled, (b) will wait for it to complete,
+ * then (c) dequeue it and start a new single byte read.
+ *
+ * Instead here, we'll do a single byte read first without scheduling
+ * a follow-up single byte read.  Then we'll do a bigger read for
+ * the rest.  Once that's done we'll kick-off another single byte
+ * read.
+ */
+static int readchar_buf(char *buf, int len)
+{
+#if 0
+    int i;
+    char ch;
+
+    for (i = 0; i < len; i++) {
+      ch = readchar();
+      if (timeout == TRUE)
+          return -1;
+      buf[i] = ch;
+    }
+    return len;
+#else
+    int rd;
+    char ch;
+
+    /* First character, don't schedule the next read */
+    /*
+     * XXX TODO: is this actually correct?
+     * like, could we have some race where both happens and
+     * we never schedule a follow-up read?
+     */
+    ch = readchar_sched(0);
+    if (timeout == TRUE)
+        return -1;
+    buf[0] = ch;
+
+    /* If we don't have any other bytes, finish + schedule read */
+    if (len == 1) {
+        serial_read_start();
+        return len;
+    }
+
+    /* Schedule a read for the rest */
+    serial_read_start_buf(&buf[1], len - 1);
+
+    /* Now we wait until it's completed or timeout */
+    rd = FALSE;
+
+    while (rd == FALSE) {
+      /* Don't wait here if the serial port is using QUICK and is ready */
+      if (serial_read_is_ready() == 0) {
+          Wait(serial_get_signal_bitmask() |
+               (1 << mywindow->UserPort->mp_SigBit));
+      }
+
+      /* Check if the serial IO is completed */
+      if (serial_read_ready()) {
+        /* We've completed the read, so break here */
+        rd = TRUE;
+        break;
+      }
+
+      /* Check for being cancelled */
+      if ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
+        if ((NewMessage->Class) == RAWKEY) {
+          if ((NewMessage->Code) == 69) {
+            emits("\nUser Cancelled Transfer");
+            /* Abort the current IO */
+            serial_read_abort();
+            break;
+          }
+        }
+      }
+
+    }
+
+    /*
+     * At this point we've either finished or aborted.
+     * So I /hope/ it's safe to schedule the new single byte read.
+     */
+    serial_read_start();
+
+    /* Now check if we aborted or not, and return appropriately */
+    if (rd == FALSE) {
+        timeout = TRUE;
+        return -1;
+    }
+    return len;
+#endif
 }
 
 /*
@@ -606,6 +715,7 @@ get_bytes_for_transfer(long file_size, long file_offset, int block_size)
  */
 int XMODEM_Read_File(char *file, long file_size) {
   int firstchar, sectnum, sectcurr, sectcomp, errors, errorflag;
+  int ret;
   unsigned int checksum, j, bufptr;
   long file_offset = 0L;
   int bw;
@@ -639,12 +749,12 @@ int XMODEM_Read_File(char *file, long file_size) {
         if (sectcurr == ((sectnum + 1) & 0xff)) {
           checksum = 0;
           /* Read the 128 byte data block */
-          /* This is the thing we want to highly optimise serial reading for! */
-          for (j = bufptr; j < (bufptr + SECSIZ); j++) {
-            bufr[j] = readchar();
-            if (timeout == TRUE)
+          ret = readchar_buf(&bufr[bufptr], SECSIZ);
+          if (ret < 0)
               return FALSE;
-            checksum = (checksum + bufr[j]) & 0xff;
+          /* Calculate the checksum */
+          for (j = bufptr; j < (bufptr + SECSIZ); j++) {
+              checksum = (checksum + bufr[j]) & 0xff;
           }
           /* Read / check checksum */
           if (checksum == readchar()) {
@@ -675,8 +785,9 @@ int XMODEM_Read_File(char *file, long file_size) {
           } else
             errorflag = TRUE;
         }
-      } else
+      } else {
         errorflag = TRUE;
+      }
     }
     if (errorflag == TRUE) {
       errors++;

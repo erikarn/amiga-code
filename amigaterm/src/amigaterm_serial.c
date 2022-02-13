@@ -27,10 +27,12 @@
 
 /* declarations for the serial stuff */
 
-struct IOExtSer *Read_Request;
-char rs_in[2];
-struct IOExtSer *Write_Request;
-char rs_out[2];
+static struct IOExtSer *Read_Request;
+static char rs_in[2];
+static struct IOExtSer *Write_Request;
+static char rs_out[2];
+
+static char read_queued = 0;
 
 int
 serial_init(void)
@@ -112,6 +114,28 @@ serial_read_start(void)
   Read_Request->IOSer.io_Data = (APTR)&rs_in[0];
   Read_Request->IOSer.io_Flags = IOF_QUICK;
   BeginIO((struct IORequest *)Read_Request);
+  read_queued = 1;
+}
+
+/*
+ * Queue an IO to read into the given buf.
+ *
+ * This will kick-start an async read and not wait, but for
+ * a larger buffer.
+ *
+ * This will use IOF_QUICK, so you should use the wrapper functions
+ * here to check for the serial data and then complete the IO
+ * so IOF_QUICK is correctly handled.
+ */
+void
+serial_read_start_buf(char *buf, int len)
+{
+  Read_Request->IOSer.io_Command = CMD_READ;
+  Read_Request->IOSer.io_Length = len;
+  Read_Request->IOSer.io_Data = (APTR) buf;
+  Read_Request->IOSer.io_Flags = IOF_QUICK;
+  BeginIO((struct IORequest *)Read_Request);
+  read_queued = 1;
 }
 
 /*
@@ -142,7 +166,9 @@ serial_write_char(char c)
 void
 serial_read_abort(void)
 {
-    AbortIO((struct IORequest *)Read_Request);
+    if (read_queued == 1)
+        AbortIO((struct IORequest *)Read_Request);
+    read_queued = 0;
 }
 
 void
@@ -158,12 +184,7 @@ serial_set_baud(int baud)
 void
 serial_close(void)
 {
-  /*
-   * XXX Do we need to abort a pending read IO?
-   * The original code did not; maybe that's a bug?
-   * (but it does mean we should track if we've issued
-   * a read or not..)
-   */
+  serial_read_abort();
 
   CloseDevice((struct IORequest *)Read_Request);
   DeletePort(Read_Request->IOSer.io_Message.mn_ReplyPort);
@@ -177,7 +198,7 @@ serial_close(void)
 /*
  * Return 1 if the IO is ready.
  */
-static int
+int
 serial_read_ready(void)
 {
     if (Read_Request->IOSer.io_Flags & IOF_QUICK)
