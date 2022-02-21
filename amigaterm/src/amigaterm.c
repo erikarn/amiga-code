@@ -20,13 +20,13 @@
 #include "proto/intuition.h"      // for CloseWindow, ClearMenuStrip, Open...
 #include "stdlib.h"               // for exit
 #include <clib/alib_protos.h>     // for DeletePort, BeginIO
-#include <devices/serial.h>       // for IOExtSer, SERF_SHARED, SERF_XDISA...
 #include <exec/types.h>           // for FALSE, TRUE, UBYTE, CONST_STRPTR
 #include <intuition/intuition.h>  // for MenuItem, IntuiText, Menu, Window
 #include <intuition/screens.h>    // for RAWKEY, CLOSEWINDOW, MENUPICK
 #include <stdio.h>                // for NULL, puts, fclose, fopen, EOF, getc
 
 #include "amigaterm_serial.h"
+#include "amigaterm_timer.h"
 #include "amigaterm_util.h"
 
 void emits(char string[]);        // AF
@@ -35,6 +35,7 @@ void filename(char name[], int len); // AF
 long filesize(void);               // Read a file size, or default to -1
 int XMODEM_Read_File(char *file, long size); // AF
 int XMODEM_Send_File(char *file); // AF
+int current_baud;
 #define DOS_REV 1
 #define INTUITION_REV 1
 #define GRAPHICS_REV 1
@@ -51,6 +52,7 @@ int XMODEM_Send_File(char *file); // AF
 
 static char bufr[BufSize];
 static int timeout = FALSE;
+static int transfer_abort = FALSE;
 static long bytes_xferred;
 static BPTR fh;
 /*   Intuition always wants to see these declarations */
@@ -228,7 +230,7 @@ int InitMenu() {
 int main() {
   ULONG class;
   USHORT code, menunum, itemnum;
-  int KeepGoing, capture, send, baud;
+  int KeepGoing, capture, send, baud, ret;
   char c, name[32];
   long file_size;
   FILE *tranr = NULL;
@@ -250,9 +252,17 @@ int main() {
     exit(TRUE);
   }
 
-  if (! serial_init()) {
+  if (! serial_init(9600)) {
     puts("couldn't init serial\n");
     CloseWindow(mywindow);
+    exit(TRUE);
+  }
+  current_baud = 9600;
+
+  if (! timer_init()) {
+    puts("couldn't init timer\n");
+    CloseWindow(mywindow);
+    serial_close();
     exit(TRUE);
   }
 
@@ -267,7 +277,7 @@ int main() {
   emit(12);
 
   /* Start a single byte serial read */
-  serial_read_start();
+  serial_read_start("a");
 
   while (KeepGoing) {
     /*
@@ -292,10 +302,10 @@ int main() {
     }
 
     /* See if we have a serial read IO ready */
-    c = serial_get_char();
-    if (c >= 0) {
+    ret = serial_get_char(&c);
+    if (ret > 0) {
         /* Start another serial port read */
-        serial_read_start();
+        serial_read_start("b");
 
         c = c & 0x7f;
         emit(c);
@@ -303,6 +313,9 @@ int main() {
           if ((c > 31 && c < 127) || c == 10) /* trash them mangy ctl chars */
             putc(c, tranr);
         }
+    } else if (ret < 0) {
+        /* error (eg overflow) - need to re-queue serial read */
+        serial_read_start("b2");
     }
 
     while ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
@@ -447,9 +460,10 @@ int main() {
             /* Abort the pending read IO, then set the serial baud */
             serial_read_abort();
             serial_set_baud(baud);
+            current_baud = baud;
 
             /* Start a new read IO */
-            serial_read_start();
+            serial_read_start("c");
             break;
           } /* end of switch ( menunum ) */
         }   /*  end of if ( not null ) */
@@ -461,6 +475,7 @@ int main() {
    *   up and exit.
    */
   serial_close();
+  timer_close();
   ClearMenuStrip(mywindow);
   CloseWindow(mywindow);
   exit(FALSE);
@@ -540,49 +555,73 @@ void emits(char string[]) {
 /***************************************************************/
 /*  send char and read char functions for the xmodem function */
 /*************************************************************/
-static unsigned char readchar_sched(int schedule_next) {
-  unsigned char c;
-  int rd, ch = 0;
+static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
+  char c = 0;
+  int rd, ret;
+
   rd = FALSE;
+
+  timeout = FALSE; transfer_abort = FALSE;
+
+  if (timeout_ms > 0) {
+      timer_timeout_set(timeout_ms);
+  }
+
   while (rd == FALSE) {
     /* Don't wait here if the serial port is using QUICK and is ready */
     if (serial_read_is_ready() == 0) {
         Wait(serial_get_signal_bitmask() |
-             (1 << mywindow->UserPort->mp_SigBit));
+             (1 << mywindow->UserPort->mp_SigBit) |
+             (timer_get_signal_bitmask()));
     }
-    ch = serial_get_char();
-    if (ch == -1) {
-      // For now ensure we return 0 like we would've before
-      ch = 0;
-    } else {
+    ret = serial_get_char(&c);
+    if (ret < 0) {
+      /* IO error - we need to re-schedule another IO and break here */
+      rd = FALSE;
+      if (schedule_next) {
+          serial_read_start("d2");
+      }
+      c = 0;
+      break;
+    } else if (ret > 0) {
       rd = TRUE;
       if (schedule_next) {
-          serial_read_start();
+          serial_read_start("d");
       }
       break;
+    }
+
+    /* Check if we hit our timeout timer */
+    if (timer_timeout_fired()) {
+        timer_timeout_complete();
+        emits("Timeout\n");
+        rd = FALSE;
+        timeout = TRUE;
+        break;
     }
 
     if ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
       if ((NewMessage->Class) == RAWKEY) {
         if ((NewMessage->Code) == 69) {
-          emits("\nUser Cancelled Transfer");
+          emits("User Cancelled Transfer\n");
+          rd = FALSE;
+          transfer_abort = TRUE;
           break;
         }
       }
     }
   }
-  if (rd == FALSE) {
-    timeout = TRUE;
-    emits("\nTimeout Waiting For Character\n");
-  }
-  c = ch;
-  return c;
+
+  // Abort any pending timer
+  timer_timeout_abort();
+
+  return (unsigned char) c;
 }
 
 static unsigned char
 readchar(void)
 {
-    return readchar_sched(1);
+    return readchar_sched(1, 1000);
 }
 
 /*
@@ -616,6 +655,9 @@ static int readchar_buf(char *buf, int len)
 #else
     int rd;
     char ch;
+    int cur_timeout;
+
+    timeout = FALSE; transfer_abort = FALSE;
 
     /* First character, don't schedule the next read */
     /*
@@ -623,16 +665,26 @@ static int readchar_buf(char *buf, int len)
      * like, could we have some race where both happens and
      * we never schedule a follow-up read?
      */
-    ch = readchar_sched(0);
-    if (timeout == TRUE)
+    ch = readchar_sched(0, 1000);
+    if ((timeout == TRUE) || (transfer_abort == TRUE))
         return -1;
     buf[0] = ch;
 
     /* If we don't have any other bytes, finish + schedule read */
     if (len == 1) {
-        serial_read_start();
+        serial_read_start("e");
         return len;
     }
+
+    /* Timeout is 128 bytes at the baud rate; add 50% in case */
+    if (current_baud != 0) {
+        cur_timeout = (128 * 15 * 1000) / current_baud;
+    } else {
+        cur_timeout = 0;
+    }
+
+    if (cur_timeout > 0)
+        timer_timeout_set(cur_timeout);
 
     /* Schedule a read for the rest */
     serial_read_start_buf(&buf[1], len - 1);
@@ -644,13 +696,27 @@ static int readchar_buf(char *buf, int len)
       /* Don't wait here if the serial port is using QUICK and is ready */
       if (serial_read_is_ready() == 0) {
           Wait(serial_get_signal_bitmask() |
+               timer_get_signal_bitmask() |
                (1 << mywindow->UserPort->mp_SigBit));
       }
 
       /* Check if the serial IO is completed */
       if (serial_read_ready()) {
+        /* Complete the read */
+	/* XXX TODO: we need to handle an error here (eg overrun), return up an error AND schedule a new read IO */
+        serial_read_wait();
         /* We've completed the read, so break here */
         rd = TRUE;
+        break;
+      }
+
+      /* Check if timeout */
+      if (timer_timeout_fired()) {
+        timer_timeout_complete();
+        serial_read_abort();
+        rd = FALSE;
+        timeout = TRUE;
+        emits("Timeout\n");
         break;
       }
 
@@ -658,9 +724,10 @@ static int readchar_buf(char *buf, int len)
       if ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
         if ((NewMessage->Class) == RAWKEY) {
           if ((NewMessage->Code) == 69) {
-            emits("\nUser Cancelled Transfer");
+            emits("User Cancelled Transfer\n");
             /* Abort the current IO */
             serial_read_abort();
+            transfer_abort = TRUE;
             break;
           }
         }
@@ -672,11 +739,16 @@ static int readchar_buf(char *buf, int len)
      * At this point we've either finished or aborted.
      * So I /hope/ it's safe to schedule the new single byte read.
      */
-    serial_read_start();
+    serial_read_start("f");
+
+    /*
+     * And it's safe to abort this; the timer layer will only do
+     * the IO abort if it was actually scheduled.
+     */
+    timer_timeout_abort();
 
     /* Now check if we aborted or not, and return appropriately */
     if (rd == FALSE) {
-        timeout = TRUE;
         return -1;
     }
     return len;
@@ -723,35 +795,66 @@ int XMODEM_Read_File(char *file, long file_size) {
   if ((fh = Open((UBYTE *)file, MODE_NEWFILE)) < 0) {
     emits("Cannot Open File\n");
     return FALSE;
-  } else
-    emits("Receiving File...");
+  } else {
+    emits("Receiving File...\n");
+  }
+
   timeout = FALSE;
+  transfer_abort = FALSE;
   sectnum = errors = bufptr = 0;
+
+  /* Kick the remote side to start sending */
   serial_write_char(NAK);
   firstchar = 0;
+
+  /* Loop until we're done or hit maximum errors */
   while (firstchar != EOT && errors != ERRORMAX) {
     errorflag = FALSE;
-    do { /* get sync char */
+    timeout = FALSE;
+    transfer_abort = FALSE;
+
+    /* Loop over until we hit sync char or EOT */
+    do {
       firstchar = readchar();
-      if (timeout == TRUE)
+
+      if (transfer_abort == TRUE) {
         return FALSE;
+      }
+
     } while (firstchar != SOH && firstchar != EOT);
+
+    /* If we're at SOH then start reading the current block */
     if (firstchar == SOH) {
       /* Read the current sector and its inverted value */
       sectcurr = readchar();
-      if (timeout == TRUE)
+      if (transfer_abort == TRUE)
         return FALSE;
+      if (timeout)
+          continue;
+
       sectcomp = readchar();
-      if (timeout == TRUE)
+      if (transfer_abort == TRUE)
         return FALSE;
+      if (timeout == TRUE)
+          continue;
+
       if ((sectcurr + sectcomp) == 255) {
         /* Check to see if this sector is the next we're expecting */
         if (sectcurr == ((sectnum + 1) & 0xff)) {
           checksum = 0;
           /* Read the 128 byte data block */
           ret = readchar_buf(&bufr[bufptr], SECSIZ);
-          if (ret < 0)
-              return FALSE;
+          if (ret < 0) {
+              /* Check to see if we've hit timeout or abort */
+              if (transfer_abort == TRUE)
+                  return FALSE;
+              if (timeout == TRUE) {
+                emits("Timeout receiving block\n");
+                serial_write_char(NAK);
+                errors++;
+                continue;
+              }
+          }
           /* Calculate the checksum */
           for (j = bufptr; j < (bufptr + SECSIZ); j++) {
               checksum = (checksum + bufr[j]) & 0xff;
@@ -767,42 +870,48 @@ int XMODEM_Read_File(char *file, long file_size) {
               bufptr = 0;
               bw = get_bytes_for_transfer(file_size, file_offset, BufSize);
               if ((bw > 0) && (Write(fh, bufr, bw) == EOF)) {
-                emits("\nError Writing File\n");
+                emits("Error Writing File\n");
                 return FALSE;
               };
               file_offset += bw;
             };
             serial_write_char(ACK);
           } else {
+            emits("Invalid checksum\n");
             errorflag = TRUE;
-            if (timeout == TRUE)
-              return FALSE;
           }
         } else {
           if (sectcurr == (sectnum & 0xff)) {
-            emits("\nReceived Duplicate Sector\n");
+            emits("Received Duplicate Sector\n");
             serial_write_char(ACK);
-          } else
+          } else {
+            emits("Wrong sector offset\n");
             errorflag = TRUE;
+          }
         }
       } else {
+        emits("Invalid sector bytes\n");
         errorflag = TRUE;
       }
     }
+
     if (errorflag == TRUE) {
       errors++;
-      emits("\nError\n");
+      emits("Sending NAK\n");
       serial_write_char(NAK);
     }
   }; /* end while */
+
   if ((firstchar == EOT) && (errors < ERRORMAX)) {
     serial_write_char(ACK);
     bw = get_bytes_for_transfer(file_size, file_offset, bufptr);
     if (bw > 0)
         Write(fh, bufr, bw);
     Close(fh);
+    emits("\nReceive OK\n");
     return TRUE;
   }
+  emits("\nReceive fail\n");
   return FALSE;
 }
 int XMODEM_Send_File(char *file) {

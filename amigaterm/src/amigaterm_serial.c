@@ -35,7 +35,7 @@ static char rs_out[2];
 static char read_queued = 0;
 
 int
-serial_init(void)
+serial_init(int baud)
 {
   Read_Request = (struct IOExtSer *)AllocMem(sizeof(*Read_Request),
                                              MEMF_PUBLIC | MEMF_CLEAR);
@@ -85,7 +85,7 @@ serial_init(void)
 #if ENABLE_HWFLOW
   Read_Request->io_SerFlags |= SERF_7WIRE;
 #endif
-  Read_Request->io_Baud = 9600;
+  Read_Request->io_Baud = baud;
   Read_Request->io_ReadLen = 8;
   Read_Request->io_WriteLen = 8;
   Read_Request->io_CtlChar = 1L;
@@ -107,8 +107,11 @@ serial_init(void)
  * here to read the serial data; it'll do the right thing.
  */
 void
-serial_read_start(void)
+serial_read_start(char *l)
 {
+  if (read_queued == 1) {
+      printf("%s: called (%s), read_queued is 1!\n", __func__, l);
+  }
   Read_Request->IOSer.io_Command = CMD_READ;
   Read_Request->IOSer.io_Length = 1;
   Read_Request->IOSer.io_Data = (APTR)&rs_in[0];
@@ -130,6 +133,10 @@ serial_read_start(void)
 void
 serial_read_start_buf(char *buf, int len)
 {
+
+  if (read_queued == 1) {
+      printf("%s: called, read_queued is 1!\n", __func__);
+  }
   Read_Request->IOSer.io_Command = CMD_READ;
   Read_Request->IOSer.io_Length = len;
   Read_Request->IOSer.io_Data = (APTR) buf;
@@ -174,6 +181,9 @@ serial_read_abort(void)
 void
 serial_set_baud(int baud)
 {
+    if (read_queued == 1) {
+      printf("%s: called with read_queued=1!\n", __func__);
+    }
     Read_Request->io_Baud = baud;
     Read_Request->IOSer.io_Command = SDCMD_SETPARAMS;
     Read_Request->IOSer.io_Flags = 0;
@@ -209,38 +219,67 @@ serial_read_ready(void)
     return 0;
 }
 
-static int
+/*
+ * Wait for the IO to complete.
+ *
+ * Returns 1 if the IO is ready, 0 if there was an error.
+ */
+int
 serial_read_wait(void)
 {
     char ret;
 
-    if (Read_Request->IOSer.io_Flags & IOF_QUICK)
+    if (Read_Request->IOSer.io_Flags & IOF_QUICK) {
+      read_queued = 0;
       return 1;
+    }
 
     ret = WaitIO((struct IORequest *) Read_Request);
-    if (ret == 0)
+    if (ret == 0) {
+        read_queued = 0;
         return 1;
+    }
+
+    /*
+     * We definitely, DEFINITELY have to handle the error
+     * here.  Eg I'm seeing '6' returned here, which is a
+     * hardware overrun.  At this point I don't know whether
+     * we need to abort the existing IO or whether it's
+     * considered as 'failed'.
+     */
+    printf("%s: WaitIO failed (%d)\n", __func__, ret);
     return 0;
 }
 
 /*
- * Check to see if the pending serial IO is ready and if
- * so, read it and return it.
- *
- * This returns -1 if there was no serial character ready,
- * and the character if there was.
+ * Check to see if the pending serial IO is ready and if so
+ * fetch it and return it.
  *
  * This routine won't queue the IO for the next character.
  * The caller should use serial_read_start() again to do that.
+ *
+ * Returns 0 if no character is ready, 1 if character is ready
+ * and -1 if there was a read error.
  */
 int
-serial_get_char(void)
+serial_get_char(char *ch)
 {
     if (serial_read_ready() == 0)
-        return -1;
+        return 0;
+
+    /*
+     * XXX yes we need to return an actual error here, as
+     * if serial_read_wait() returned an error (eg overrun)
+     * the transaction is likely "complete" and we'll have
+     * to return an error up to the caller to handle AND
+     * have them re-schedule an IO.
+     */
     if (serial_read_wait() == 0)
         return -1;
-    return ((int)rs_in[0]) & 0xff;
+    read_queued = 0;
+
+    *ch = rs_in[0];
+    return 1;
 }
 
 /*
@@ -250,7 +289,8 @@ serial_get_char(void)
 int
 serial_read_is_ready(void)
 {
-    if (Read_Request->IOSer.io_Flags & IOF_QUICK)
+    if (Read_Request->IOSer.io_Flags & IOF_QUICK) {
       return 1;
+    }
     return 0;
 }
