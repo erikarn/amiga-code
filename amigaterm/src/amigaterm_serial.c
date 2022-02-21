@@ -37,6 +37,8 @@ static char read_queued = 0;
 int
 serial_init(int baud)
 {
+
+  // XXX TODO: use CreateExtIO / DeleteExtIO!
   Read_Request = (struct IOExtSer *)AllocMem(sizeof(*Read_Request),
                                              MEMF_PUBLIC | MEMF_CLEAR);
   Read_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
@@ -44,6 +46,7 @@ serial_init(int baud)
   Read_Request->io_SerFlags |= SERF_7WIRE;
 #endif
   Read_Request->IOSer.io_Flags = 0;
+  // XXX TODO: once creatextio is used, we don't need this; it's done in createextio
   Read_Request->IOSer.io_Message.mn_ReplyPort =
       CreatePort((CONST_STRPTR) "Read_RS", 0);
   if (OpenDevice((CONST_STRPTR)SERIALNAME, 0, (struct IORequest *)Read_Request,
@@ -248,6 +251,7 @@ serial_read_wait(void)
      * considered as 'failed'.
      */
     printf("%s: WaitIO failed (%d)\n", __func__, ret);
+    read_queued = 0;
     return 0;
 }
 
@@ -264,6 +268,11 @@ serial_read_wait(void)
 int
 serial_get_char(char *ch)
 {
+
+    if (read_queued == 0) {
+        printf("%s: called; read_queued=0?\n", __func__);
+    }
+
     if (serial_read_ready() == 0)
         return 0;
 
