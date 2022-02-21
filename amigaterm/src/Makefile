@@ -11,7 +11,9 @@ amigaterm_serial.o: amigaterm_serial.c
 
 amigaterm_util.o: amigaterm_util.c
 
-amigaterm: amigaterm.o amigaterm_serial.o amigaterm_util.o
+amigaterm_timer.o: amigaterm_timer.c
+
+amigaterm: amigaterm.o amigaterm_serial.o amigaterm_util.o amigaterm_timer.o
 
 clean:
 	$(RM) -f amigaterm *.o
