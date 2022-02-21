@@ -22,23 +22,36 @@
 
 #include "amigaterm_timer.h"
 
-static struct Device * TimerBase;
-static struct timerequest timer_req;
+struct Device * TimerBase;
+static struct timerequest *timer_req;
 static int pending_timer = 0;
+static struct MsgPort *timer_port;
 
 int
 timer_init(void)
 {
     int ret;
 
-    ret = OpenDevice((CONST_STRPTR) TIMERNAME, 0, (struct IORequest *) &timer_req, 0);
+    timer_port = CreatePort(NULL, 0);
+    if (timer_port == NULL)
+        return (0);
+
+    timer_req = (struct timerequest *) CreateExtIO(timer_port, sizeof(struct timerequest));
+    if (timer_req == NULL) {
+        DeletePort(timer_port);
+        return (0);
+    }
+
+    ret = OpenDevice((CONST_STRPTR) TIMERNAME, 0, (struct IORequest *) timer_req, 0);
 
     if (ret != 0) {
+        DeleteExtIO((struct IORequest *) timer_req);
+        DeletePort(timer_port);
         puts("Couldn't open timer device\n");
         return 0;
     }
 
-    TimerBase = timer_req.tr_node.io_Device;
+    TimerBase = timer_req->tr_node.io_Device;
 
     return 1;
 }
@@ -47,22 +60,24 @@ void
 timer_close(void)
 {
     if (pending_timer)
-        AbortIO((struct IORequest *) &timer_req);
+        AbortIO((struct IORequest *) timer_req);
 
-    CloseDevice((struct IORequest *) &timer_req);
+    CloseDevice((struct IORequest *) timer_req);
+    DeleteExtIO((struct IORequest *) timer_req);
+    DeletePort(timer_port);
 }
 
 void
 timer_timeout_set(int ms)
 {
     if (pending_timer)
-        AbortIO((struct IORequest *) &timer_req);
+        AbortIO((struct IORequest *) timer_req);
 
-    timer_req.tr_time.tv_sec = ms / 1000;
-    timer_req.tr_time.tv_usec = ms % 1000;
-    timer_req.tr_node.io_Command = TR_ADDREQUEST;
+    timer_req->tr_time.tv_sec = ms / 1000;
+    timer_req->tr_time.tv_usec = ms % 1000;
+    timer_req->tr_node.io_Command = TR_ADDREQUEST;
 
-    SendIO((struct IORequest *) &timer_req);
+    SendIO((struct IORequest *) timer_req);
     pending_timer = 1;
 }
 
@@ -70,14 +85,14 @@ int
 timer_get_signal_bitmask(void)
 {
 
-    return (1 << timer_req.tr_node.io_Message.mn_ReplyPort->mp_SigBit);
+    return (1 << timer_port->mp_SigBit);
 }
 
 void
 timer_timeout_abort(void)
 {
     if (pending_timer)
-        AbortIO((struct IORequest *) &timer_req);
+        AbortIO((struct IORequest *) timer_req);
     pending_timer = 0;
 }
 
@@ -86,7 +101,7 @@ timer_timeout_fired(void)
 {
     if (pending_timer == 0)
         return 0;
-    return (CheckIO((struct IORequest *) &timer_req) != 0);
+    return (CheckIO((struct IORequest *) timer_req) != 0);
 }
 
 int
@@ -95,7 +110,7 @@ timer_timeout_complete(void)
     if (timer_timeout_fired() != 1)
         return 0;
 
-    WaitIO((struct IORequest *) &timer_req);
+    WaitIO((struct IORequest *) timer_req);
     pending_timer = 0;
     return 1;
 }
