@@ -594,7 +594,7 @@ static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
     /* Check if we hit our timeout timer */
     if (timer_timeout_fired()) {
         timer_timeout_complete();
-        emits("Timeout (readchar_sched)\n");
+//        emits("Timeout (readchar_sched)\n");
         rd = FALSE;
         timeout = TRUE;
         break;
@@ -643,78 +643,56 @@ readchar_flush(int timeout_ms)
 	if (timeout_ms == 0)
 		timeout_ms = 1;
 
-	emits("Flushing serial read...\n");
-
+	/* Set initial timer */
 	timer_timeout_set(timeout_ms);
 
 	/*
 	 * Loop over and keep reading characters until we hit timeout.
 	 */
 	while (1) {
-//		uint32_t sig;
-		/* Set initial timer */
-		/*
-		 * XXX TODO: doing this every time is inefficient.
-		 * Instead, let's eventually migrate to scheduling it
-		 * if there's no serial IO ready, and then only
-		 * re-schedule it again if there's no serial IO ready.
-		 */
-
 		/*
 		 * Don't wait here if the serial port is using QUICK
 		 * and is ready.
 		 */
-//		emits("Wait..\n");
 		if (serial_read_is_ready() == 0) {
 			Wait(serial_get_signal_bitmask() |
 			    (1 << mywindow->UserPort->mp_SigBit) |
 			    (timer_get_signal_bitmask()));
-		} else {
-//			emits("... skip\n");
 		}
-
-//		sig = SetSignal(0, 0);
-//		printf("signal: 0x%08x; timer=0x%08x\n", sig, sig & timer_get_signal_bitmask());
 
 		/* Check if we hit our timeout timer */
 		if (timer_timeout_fired()) {
 			timer_timeout_complete();
-			emits("Timeout (flush)\n");
 			break;
 		}
 
 		/* Try to read a character, but don't block */
 		ret = serial_get_char(&c);
 		if (ret == 0) {
-			emits("None ready..\n");
-			// .. am I getting stuck in this state somehow?
 			timer_timeout_abort();
 			timer_timeout_set(timeout_ms);
 		} else if (ret > 0) {
 			/* Got a char */
-//			emits("got one..\n");
 			serial_read_start("g1");
 		} else if (ret < 0) {
-//			emits("got error..\n");
 			serial_read_start("g2");
 		}
 
-    if ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
-      if ((NewMessage->Class) == RAWKEY) {
-        if ((NewMessage->Code) == 69) {
-          emits("User Cancelled Transfer\n");
-          transfer_abort = TRUE;
-          break;
-        }
-      }
-    }
+		if ((NewMessage = (struct IntuiMessage *)
+		    GetMsg(mywindow->UserPort))) {
+			if ((NewMessage->Class) == RAWKEY) {
+				if ((NewMessage->Code) == 69) {
+					emits("User Cancelled Transfer\n");
+					transfer_abort = TRUE;
+					break;
+				}
+			}
+		}
 	}
 
 	/* Not sure - do I need to do this in case it fired? */
 	timer_timeout_abort();
-	SetSignal(0, timer_get_signal_bitmask());
 
-	emits("done.\n");
 	return (1);
 }
 
@@ -810,6 +788,9 @@ static int readchar_buf(char *buf, int len)
         if (ret == 1) {
            /* IO was OK */
            rd = TRUE;
+        } else if (ret == 0) {
+           /* No IO yet */
+           rd = FALSE;
         } else {
            /* IO error */
            rd = FALSE;
@@ -823,7 +804,7 @@ static int readchar_buf(char *buf, int len)
         serial_read_abort();
         rd = FALSE;
         timeout = TRUE;
-        emits("Timeout (readchar_buf)\n");
+//        emits("Timeout (readchar_buf)\n");
         break;
       }
 
@@ -940,7 +921,7 @@ int XMODEM_Read_File(char *file, long file_size) {
       if (transfer_abort == TRUE)
         return FALSE;
       if (timeout) {
-          readchar_flush(1000);
+          readchar_flush(100);
           continue;
       }
 
@@ -948,7 +929,7 @@ int XMODEM_Read_File(char *file, long file_size) {
       if (transfer_abort == TRUE)
         return FALSE;
       if (timeout == TRUE) {
-          readchar_flush(1000);
+          readchar_flush(100);
           continue;
       }
 
@@ -964,7 +945,7 @@ int XMODEM_Read_File(char *file, long file_size) {
                   return FALSE;
               if (timeout == TRUE) {
                 emits("Timeout receiving block\n");
-                readchar_flush(1000);
+                readchar_flush(100);
                 serial_write_char(NAK);
                 errors++;
                 continue;
@@ -1013,7 +994,7 @@ int XMODEM_Read_File(char *file, long file_size) {
     if (errorflag == TRUE) {
       errors++;
       emits("Sending NAK\n");
-      readchar_flush(1000);
+      readchar_flush(100);
       serial_write_char(NAK);
     }
   }; /* end while */
