@@ -59,8 +59,11 @@ timer_init(void)
 void
 timer_close(void)
 {
-    if (pending_timer)
+    if (pending_timer) {
         AbortIO((struct IORequest *) timer_req);
+        WaitIO((struct IORequest *) timer_req);
+        SetSignal(0, timer_get_signal_bitmask());
+    }
 
     CloseDevice((struct IORequest *) timer_req);
     DeleteExtIO((struct IORequest *) timer_req);
@@ -70,8 +73,11 @@ timer_close(void)
 void
 timer_timeout_set(int ms)
 {
-    if (pending_timer)
+    if (pending_timer) {
         AbortIO((struct IORequest *) timer_req);
+        WaitIO((struct IORequest *) timer_req);
+        SetSignal(0, timer_get_signal_bitmask());
+    }
 
     timer_req->tr_time.tv_sec = ms / 1000;
     timer_req->tr_time.tv_usec = ms % 1000;
@@ -91,8 +97,11 @@ timer_get_signal_bitmask(void)
 void
 timer_timeout_abort(void)
 {
-    if (pending_timer)
+    if (pending_timer) {
         AbortIO((struct IORequest *) timer_req);
+        WaitIO((struct IORequest *) timer_req);
+        SetSignal(0, timer_get_signal_bitmask());
+    }
     pending_timer = 0;
 }
 

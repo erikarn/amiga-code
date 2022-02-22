@@ -176,8 +176,11 @@ serial_write_char(char c)
 void
 serial_read_abort(void)
 {
-    if (read_queued == 1)
+    if (read_queued == 1) {
         AbortIO((struct IORequest *)Read_Request);
+        WaitIO((struct IORequest *) Read_Request);
+        SetSignal(0, serial_get_signal_bitmask());
+    }
     read_queued = 0;
 }
 
@@ -232,11 +235,13 @@ serial_read_wait(void)
 {
     char ret;
 
+    /* Will WaitIO do the right thing with IOF_QUICK for us? */
+#if 0
     if (Read_Request->IOSer.io_Flags & IOF_QUICK) {
       read_queued = 0;
       return 1;
     }
-
+#endif
     ret = WaitIO((struct IORequest *) Read_Request);
     if (ret == 0) {
         read_queued = 0;
@@ -251,6 +256,8 @@ serial_read_wait(void)
      * considered as 'failed'.
      */
     printf("%s: WaitIO failed (%d)\n", __func__, ret);
+    AbortIO((struct IORequest *) Read_Request); // ?
+    SetSignal(0, serial_get_signal_bitmask());
     read_queued = 0;
     return 0;
 }
