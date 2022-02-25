@@ -36,7 +36,8 @@ timer_init(void)
     if (timer_port == NULL)
         return (0);
 
-    timer_req = (struct timerequest *) CreateExtIO(timer_port, sizeof(struct timerequest));
+    timer_req = (struct timerequest *) CreateExtIO(timer_port,
+      sizeof(struct timerequest));
     if (timer_req == NULL) {
         DeletePort(timer_port);
         return (0);

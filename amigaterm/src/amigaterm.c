@@ -50,6 +50,9 @@ int current_baud;
 #define ACK 6          /* acknowledge sector transmission */
 #define NAK 21         /* error in transmission detected */
 
+/* Enable serial hardware flow control */
+#define ENABLE_HWFLOW 1
+
 static char bufr[BufSize];
 static int timeout = FALSE;
 static int transfer_abort = FALSE;
@@ -252,7 +255,11 @@ int main() {
     exit(TRUE);
   }
 
-  if (! serial_init(9600)) {
+#if ENABLE_HWFLOW
+  if (! serial_init(9600, 1)) {
+#else
+  if (! serial_init(9600, 0)) {
+#endif
     puts("couldn't init serial\n");
     CloseWindow(mywindow);
     exit(TRUE);
@@ -277,7 +284,7 @@ int main() {
   emit(12);
 
   /* Start a single byte serial read */
-  serial_read_start("a");
+  serial_read_start();
 
   while (KeepGoing) {
     /*
@@ -288,7 +295,7 @@ int main() {
      * So skip the Wait().
      */
     if (serial_read_is_ready() == 0) {
-      Wait((serial_get_signal_bitmask()) |
+      Wait((serial_get_read_signal_bitmask()) |
            (1 << mywindow->UserPort->mp_SigBit));
     }
     if (send) {
@@ -305,7 +312,7 @@ int main() {
     ret = serial_get_char(&c);
     if (ret > 0) {
         /* Start another serial port read */
-        serial_read_start("b");
+        serial_read_start();
 
         c = c & 0x7f;
         emit(c);
@@ -315,7 +322,7 @@ int main() {
         }
     } else if (ret < 0) {
         /* error (eg overflow) - need to re-queue serial read */
-        serial_read_start("b2");
+        serial_read_start();
     }
 
     while ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
@@ -463,7 +470,7 @@ int main() {
             current_baud = baud;
 
             /* Start a new read IO */
-            serial_read_start("c");
+            serial_read_start();
             break;
           } /* end of switch ( menunum ) */
         }   /*  end of if ( not null ) */
@@ -570,7 +577,7 @@ static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
   while (rd == FALSE) {
     /* Don't wait here if the serial port is using QUICK and is ready */
     if (serial_read_is_ready() == 0) {
-        Wait(serial_get_signal_bitmask() |
+        Wait(serial_get_read_signal_bitmask() |
              (1 << mywindow->UserPort->mp_SigBit) |
              (timer_get_signal_bitmask()));
     }
@@ -579,14 +586,14 @@ static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
       /* IO error - we need to re-schedule another IO and break here */
       rd = FALSE;
       if (schedule_next) {
-          serial_read_start("d2");
+          serial_read_start();
       }
       c = 0;
       break;
     } else if (ret > 0) {
       rd = TRUE;
       if (schedule_next) {
-          serial_read_start("d");
+          serial_read_start();
       }
       break;
     }
@@ -655,7 +662,7 @@ readchar_flush(int timeout_ms)
 		 * and is ready.
 		 */
 		if (serial_read_is_ready() == 0) {
-			Wait(serial_get_signal_bitmask() |
+			Wait(serial_get_read_signal_bitmask() |
 			    (1 << mywindow->UserPort->mp_SigBit) |
 			    (timer_get_signal_bitmask()));
 		}
@@ -673,9 +680,9 @@ readchar_flush(int timeout_ms)
 			timer_timeout_set(timeout_ms);
 		} else if (ret > 0) {
 			/* Got a char */
-			serial_read_start("g1");
+			serial_read_start();
 		} else if (ret < 0) {
-			serial_read_start("g2");
+			serial_read_start();
 		}
 
 		if ((NewMessage = (struct IntuiMessage *)
@@ -744,7 +751,7 @@ static int readchar_buf(char *buf, int len)
 
     /* If we don't have any other bytes, finish + schedule read */
     if (len == 1) {
-        serial_read_start("e");
+        serial_read_start();
         return len;
     }
 
@@ -775,7 +782,7 @@ static int readchar_buf(char *buf, int len)
     while (rd == FALSE) {
       /* Don't wait here if the serial port is using QUICK and is ready */
       if (serial_read_is_ready() == 0) {
-          Wait(serial_get_signal_bitmask() |
+          Wait(serial_get_read_signal_bitmask() |
                timer_get_signal_bitmask() |
                (1 << mywindow->UserPort->mp_SigBit));
       }
@@ -827,7 +834,7 @@ static int readchar_buf(char *buf, int len)
      * At this point we've either finished or aborted.
      * So I /hope/ it's safe to schedule the new single byte read.
      */
-    serial_read_start("f");
+    serial_read_start();
 
     /*
      * And it's safe to abort this; the timer layer will only do

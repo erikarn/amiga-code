@@ -22,40 +22,45 @@
 
 #include "amigaterm_serial.h"
 
-/* Whether to use hardware flow control or not */
-#define ENABLE_HWFLOW  1
-
 /* declarations for the serial stuff */
 
-static struct IOExtSer *Read_Request;
+static struct IOExtSer *Read_Request = NULL;
+static struct IOExtSer *Write_Request = NULL;
+static struct MsgPort *serial_read_port = NULL;
+static struct MsgPort *serial_write_port = NULL;
+
 static char rs_in[2];
-static struct IOExtSer *Write_Request;
 static char rs_out[2];
 
 static char read_queued = 0;
 
 int
-serial_init(int baud)
+serial_init(int baud, int enable_hwflow)
 {
 
-  // XXX TODO: use CreateExtIO / DeleteExtIO!
-  Read_Request = (struct IOExtSer *)AllocMem(sizeof(*Read_Request),
-                                             MEMF_PUBLIC | MEMF_CLEAR);
+  serial_read_port = CreatePort((CONST_STRPTR) "Read_RS", 0);
+  if (serial_read_port == NULL)
+    goto error;
+
+  serial_write_port = CreatePort((CONST_STRPTR) "Write_RS", 0);
+  if (serial_write_port == NULL)
+    goto error;
+
+
+  Read_Request = (struct IOExtSer *) CreateExtIO(serial_read_port,
+    sizeof(struct IOExtSer));
+  if (Read_Request == NULL)
+    goto error;
+
   Read_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
-#if ENABLE_HWFLOW
-  Read_Request->io_SerFlags |= SERF_7WIRE;
-#endif
+  if (enable_hwflow)
+    Read_Request->io_SerFlags |= SERF_7WIRE;
   Read_Request->IOSer.io_Flags = 0;
-  // XXX TODO: once creatextio is used, we don't need this; it's done in createextio
-  Read_Request->IOSer.io_Message.mn_ReplyPort =
-      CreatePort((CONST_STRPTR) "Read_RS", 0);
+
   if (OpenDevice((CONST_STRPTR)SERIALNAME, 0, (struct IORequest *)Read_Request,
                  0)) {
     puts("Can't open Read device\n");
-    DeletePort(Read_Request->IOSer.io_Message.mn_ReplyPort);
-    FreeMem(Read_Request, sizeof(*Read_Request));
-
-    return 0;
+    goto error;
   }
 
   Read_Request->IOSer.io_Command = CMD_READ;
@@ -63,24 +68,22 @@ serial_init(int baud)
   Read_Request->IOSer.io_Data = (APTR)&rs_in[0];
   Read_Request->IOSer.io_Flags = 0;
 
-  Write_Request = (struct IOExtSer *)AllocMem(sizeof(*Write_Request),
-                                              MEMF_PUBLIC | MEMF_CLEAR);
+  Write_Request = (struct IOExtSer *) CreateExtIO(serial_write_port,
+    sizeof(struct IOExtSer));
+  if (Read_Request == NULL)
+    goto error;
+
   Write_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
-#if ENABLE_HWFLOW
-  Write_Request->io_SerFlags |= SERF_7WIRE;
-#endif
-  Write_Request->IOSer.io_Message.mn_ReplyPort =
-      CreatePort((CONST_STRPTR) "Write_RS", 0);
+  if (enable_hwflow)
+    Write_Request->io_SerFlags |= SERF_7WIRE;
+
   if (OpenDevice((CONST_STRPTR)SERIALNAME, 0, (struct IORequest *)Write_Request,
                  0)) {
     puts("Can't open Write device\n");
-    DeletePort(Write_Request->IOSer.io_Message.mn_ReplyPort);
-    FreeMem(Write_Request, sizeof(*Write_Request));
-    DeletePort(Read_Request->IOSer.io_Message.mn_ReplyPort);
-    FreeMem(Read_Request, sizeof(*Read_Request));
-
-    return 0;
+    CloseDevice((struct IORequest *)Read_Request);
+    goto error;
   }
+
   Write_Request->IOSer.io_Command = CMD_WRITE;
   Write_Request->IOSer.io_Length = 1;
   Write_Request->IOSer.io_Data = (APTR)&rs_out[0];
@@ -95,9 +98,25 @@ serial_init(int baud)
   Read_Request->IOSer.io_Flags = 0;
   Read_Request->IOSer.io_Command = SDCMD_SETPARAMS;
   DoIO((struct IORequest *)Read_Request);
+
   Read_Request->IOSer.io_Command = CMD_READ;
 
   return (1);
+
+error:
+  if (Read_Request != NULL)
+    DeleteExtIO((struct IORequest *) Read_Request);
+
+  if (serial_read_port != NULL)
+    DeletePort(serial_read_port);
+
+  if (Write_Request != NULL)
+    DeleteExtIO((struct IORequest *) Write_Request);
+
+  if (serial_write_port != NULL)
+    DeletePort(serial_write_port);
+
+  return (0);
 }
 
 /*
@@ -110,11 +129,11 @@ serial_init(int baud)
  * here to read the serial data; it'll do the right thing.
  */
 void
-serial_read_start(char *l)
+serial_read_start(void)
 {
-  if (read_queued == 1) {
-      printf("%s: called (%s), read_queued is 1!\n", __func__, l);
-  }
+  if (read_queued == 1)
+      puts("serial_read_start: called w/ read_queued=1!\n");
+
   Read_Request->IOSer.io_Command = CMD_READ;
   Read_Request->IOSer.io_Length = 1;
   Read_Request->IOSer.io_Data = (APTR)&rs_in[0];
@@ -137,9 +156,9 @@ void
 serial_read_start_buf(char *buf, int len)
 {
 
-  if (read_queued == 1) {
-      printf("%s: called, read_queued is 1!\n", __func__);
-  }
+  if (read_queued == 1)
+      puts("serial_read_start_buf: called w/ read_queued=1!\n");
+
   Read_Request->IOSer.io_Command = CMD_READ;
   Read_Request->IOSer.io_Length = len;
   Read_Request->IOSer.io_Data = (APTR) buf;
@@ -152,7 +171,7 @@ serial_read_start_buf(char *buf, int len)
  * Get the signal bitmask to wait on for serial IO.
  */
 unsigned int
-serial_get_signal_bitmask(void)
+serial_get_read_signal_bitmask(void)
 {
     return (1 << Read_Request->IOSer.io_Message.mn_ReplyPort->mp_SigBit);
 }
@@ -167,6 +186,8 @@ void
 serial_write_char(char c)
 {
     rs_out[0] = c;
+    Write_Request->IOSer.io_Data = (APTR)&rs_out[0];
+    Write_Request->IOSer.io_Length = 1;
     DoIO((struct IORequest *)Write_Request);
 }
 
@@ -179,7 +200,7 @@ serial_read_abort(void)
     if (read_queued == 1) {
         AbortIO((struct IORequest *)Read_Request);
         WaitIO((struct IORequest *) Read_Request);
-        SetSignal(0, serial_get_signal_bitmask());
+        SetSignal(0, serial_get_read_signal_bitmask());
     }
     read_queued = 0;
 }
@@ -187,9 +208,9 @@ serial_read_abort(void)
 void
 serial_set_baud(int baud)
 {
-    if (read_queued == 1) {
-      printf("%s: called with read_queued=1!\n", __func__);
-    }
+    if (read_queued == 1)
+      puts("serial_set_baud: called w/ read_queued=1!\n");
+
     Read_Request->io_Baud = baud;
     Read_Request->IOSer.io_Command = SDCMD_SETPARAMS;
     Read_Request->IOSer.io_Flags = 0;
@@ -203,12 +224,13 @@ serial_close(void)
   serial_read_abort();
 
   CloseDevice((struct IORequest *)Read_Request);
-  DeletePort(Read_Request->IOSer.io_Message.mn_ReplyPort);
-  FreeMem(Read_Request, sizeof(*Read_Request));
-
   CloseDevice((struct IORequest *)Write_Request);
-  DeletePort(Write_Request->IOSer.io_Message.mn_ReplyPort);
-  FreeMem(Write_Request, sizeof(*Write_Request));
+
+  DeleteExtIO((struct IORequest *) Read_Request);
+  DeletePort(serial_read_port);
+
+  DeleteExtIO((struct IORequest *) Write_Request);
+  DeletePort(serial_write_port);
 }
 
 /*
@@ -255,9 +277,9 @@ serial_read_wait(void)
      * we need to abort the existing IO or whether it's
      * considered as 'failed'.
      */
-    printf("%s: WaitIO failed (%d)\n", __func__, ret);
+//    printf("%s: WaitIO failed (%d)\n", __func__, ret);
     AbortIO((struct IORequest *) Read_Request); // ?
-    SetSignal(0, serial_get_signal_bitmask());
+    SetSignal(0, serial_get_read_signal_bitmask());
     read_queued = 0;
     return 0;
 }
@@ -276,9 +298,8 @@ int
 serial_get_char(char *ch)
 {
 
-    if (read_queued == 0) {
-        printf("%s: called; read_queued=0?\n", __func__);
-    }
+    if (read_queued == 0)
+        puts("serial_get_char: called w/ read_queued=0!\n");
 
     if (serial_read_ready() == 0)
         return 0;
