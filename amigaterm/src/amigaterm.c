@@ -406,6 +406,13 @@ int main() {
               filename(name, 31);
               emits("\nFile size (or leave blank to not truncate):");
               file_size = filesize();
+
+              /*
+               * Ok, it's time to clean up how this receive path
+               * works, and let's /begin/ by refactoring it so
+               * it's cleaner and will close its own damned file
+               * handle.
+               */
               if (XMODEM_Read_File(name, file_size)) {
                 emits("Received\n");
                 emit(8);
@@ -625,10 +632,15 @@ static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
   return (unsigned char) c;
 }
 
+/*
+ * XXX TODO: ok, it's time to make readchar, readchar_sched, etc
+ * return an error enum, rather than setting global variables.
+ * That's just a PITA and error prone.
+ */
 static unsigned char
 readchar(void)
 {
-    return readchar_sched(1, 500);
+    return readchar_sched(1, 1000);
 }
 
 /*
@@ -744,7 +756,7 @@ static int readchar_buf(char *buf, int len)
      * like, could we have some race where both happens and
      * we never schedule a follow-up read?
      */
-    ch = readchar_sched(0, 500);
+    ch = readchar_sched(0, 1000);
     if ((timeout == TRUE) || (transfer_abort == TRUE))
         return -1;
     buf[0] = ch;
@@ -761,12 +773,12 @@ static int readchar_buf(char *buf, int len)
      * have timed out.
      */
     if (current_baud == 0) {
-        cur_timeout = 500;
+        cur_timeout = 1000;
     } else {
         cur_timeout = (128 * 15 * 1000) / current_baud;
     }
-    if (cur_timeout < 500)
-        cur_timeout = 500;
+    if (cur_timeout < 1000)
+        cur_timeout = 1000;
 
 //    printf("%s: Timeout: %d milliseconds\n", __func__, cur_timeout);
 
@@ -918,7 +930,6 @@ int XMODEM_Read_File(char *file, long file_size) {
       if (transfer_abort == TRUE) {
         return FALSE;
       }
-
     } while (firstchar != SOH && firstchar != EOT);
 
     /* If we're at SOH then start reading the current block */
