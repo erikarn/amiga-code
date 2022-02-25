@@ -628,7 +628,7 @@ static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
 static unsigned char
 readchar(void)
 {
-    return readchar_sched(1, 1000);
+    return readchar_sched(1, 500);
 }
 
 /*
@@ -744,7 +744,7 @@ static int readchar_buf(char *buf, int len)
      * like, could we have some race where both happens and
      * we never schedule a follow-up read?
      */
-    ch = readchar_sched(0, 1000);
+    ch = readchar_sched(0, 500);
     if ((timeout == TRUE) || (transfer_abort == TRUE))
         return -1;
     buf[0] = ch;
@@ -761,12 +761,12 @@ static int readchar_buf(char *buf, int len)
      * have timed out.
      */
     if (current_baud == 0) {
-        cur_timeout = 1000;
+        cur_timeout = 500;
     } else {
         cur_timeout = (128 * 15 * 1000) / current_baud;
     }
-    if (cur_timeout < 1000)
-        cur_timeout = 1000;
+    if (cur_timeout < 500)
+        cur_timeout = 500;
 
 //    printf("%s: Timeout: %d milliseconds\n", __func__, cur_timeout);
 
