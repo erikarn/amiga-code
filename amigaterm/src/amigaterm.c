@@ -1071,6 +1071,18 @@ int XMODEM_Send_File(char *file) {
         size = SECSIZ <= bytes_to_send ? SECSIZ : bytes_to_send;
         bytes_to_send -= size;
         for (j = bufptr; j < (bufptr + SECSIZ); j++)
+          /*
+           * Here's the bit that writes the file content out
+           * as a bulk write.
+           *
+           * Note that it will fill the rest of the 128 byte
+           * xmodem transfer with zeros if the send buffer
+           * isn't big enough.
+           *
+           * This needs to be taken into account when attempting
+           * to convert this particular spot to use a bulk async
+           * write.
+           */
           if (j < (bufptr + size)) {
             serial_write_char(bufr[j]);
             checksum += bufr[j];
