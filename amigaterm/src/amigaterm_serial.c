@@ -33,6 +33,7 @@ static char rs_in[2];
 static char rs_out[2];
 
 static char read_queued = 0;
+static char write_queued = 0;
 
 int
 serial_init(int baud, int enable_hwflow)
@@ -168,27 +169,12 @@ serial_read_start_buf(char *buf, int len)
 }
 
 /*
- * Get the signal bitmask to wait on for serial IO.
+ * Get the signal bitmask to wait on for read serial IO.
  */
 unsigned int
 serial_get_read_signal_bitmask(void)
 {
     return (1 << Read_Request->IOSer.io_Message.mn_ReplyPort->mp_SigBit);
-}
-
-/*
- * Write a single character to the serial port.
- *
- * This blocks; we currently don't support non-blocking serial
- * writes here.
- */
-void
-serial_write_char(char c)
-{
-    rs_out[0] = c;
-    Write_Request->IOSer.io_Data = (APTR)&rs_out[0];
-    Write_Request->IOSer.io_Length = 1;
-    DoIO((struct IORequest *)Write_Request);
 }
 
 /*
@@ -222,6 +208,7 @@ void
 serial_close(void)
 {
   serial_read_abort();
+  serial_write_abort();
 
   CloseDevice((struct IORequest *)Read_Request);
   CloseDevice((struct IORequest *)Write_Request);
@@ -331,3 +318,134 @@ serial_read_is_ready(void)
     }
     return 0;
 }
+
+
+/* *************************************** */
+
+/*
+ * Serial write IO routines
+ */
+
+/*
+ * Abort any pending write IO.
+ */
+void
+serial_write_abort(void)
+{
+    if (write_queued == 1) {
+        AbortIO((struct IORequest *)Write_Request);
+        WaitIO((struct IORequest *) Write_Request);
+        SetSignal(0, serial_get_write_signal_bitmask());
+    }
+    write_queued = 0;
+}
+
+/*
+ * Get the signal bitmask to wait on for write serial IO.
+ */
+unsigned int
+serial_get_write_signal_bitmask(void)
+{
+    return (1 << Write_Request->IOSer.io_Message.mn_ReplyPort->mp_SigBit);
+}
+
+/*
+ * Write a single character to the serial port.
+ *
+ * This blocks; we currently don't support non-blocking serial
+ * writes here.
+ */
+void
+serial_write_char(char c)
+{
+    rs_out[0] = c;
+    Write_Request->IOSer.io_Data = (APTR)&rs_out[0];
+    Write_Request->IOSer.io_Length = 1;
+    DoIO((struct IORequest *)Write_Request);
+}
+
+/*
+ * Call to see if the write is already completed.
+ * This is called as IOF_QUICK transactions won't post a signal.
+ *
+ * Only call this if an IO has been scheduled - ie if you
+ * know that you're doing a non-blocking IO.
+ */
+int
+serial_write_is_ready(void)
+{
+    if (Write_Request->IOSer.io_Flags & IOF_QUICK) {
+      return 1;
+    }
+    return 0;
+}
+
+/*
+ * Return 1 if the write IO is ready.
+ *
+ * Only call this if an IO has been scheduled - ie if you
+ * know that you're doing a non-blocking IO.
+ */
+int
+serial_write_ready(void)
+{
+    if (Write_Request->IOSer.io_Flags & IOF_QUICK)
+      return 1;
+
+    if (CheckIO((struct IORequest *) Write_Request))
+        return 1;
+    return 0;
+}
+
+/*
+ * Wait for the write IO to complete.
+ *
+ * Returns 1 if the IO is ready, 0 if there was an error.
+ */
+int
+serial_write_wait(void)
+{
+    char ret;
+
+    ret = WaitIO((struct IORequest *) Write_Request);
+    if (ret == 0) {
+        write_queued = 0;
+        return 1;
+    }
+
+    /* Handle an IO error - eg like a hardware error */
+//    printf("%s: WaitIO failed (%d)\n", __func__, ret);
+    AbortIO((struct IORequest *) Write_Request); // ?
+    SetSignal(0, serial_get_write_signal_bitmask());
+    write_queued = 0;
+    return 0;
+}
+
+/*
+ * Queue an IO to write into the given buf.
+ *
+ * This will kick-start an async write and not wait, but for
+ * a larger buffer.
+ *
+ * This will use IOF_QUICK, so you should use the wrapper functions
+ * here to check for the serial data and then complete the IO
+ * so IOF_QUICK is correctly handled.
+ *
+ * It's important that the sync version of this routine isn't
+ * called whilst this async version is in progress.
+ */
+void
+serial_write_start_buf(char *buf, int len)
+{
+
+  if (write_queued == 1)
+      puts("serial_write_start_buf: called w/ write_queued=1!\n");
+
+  Write_Request->IOSer.io_Command = CMD_READ;
+  Write_Request->IOSer.io_Length = len;
+  Write_Request->IOSer.io_Data = (APTR) buf;
+  Write_Request->IOSer.io_Flags = IOF_QUICK;
+  BeginIO((struct IORequest *) Write_Request);
+  write_queued = 1;
+}
+
