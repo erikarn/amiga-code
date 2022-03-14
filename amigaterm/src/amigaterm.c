@@ -1027,6 +1027,12 @@ int XMODEM_Read_File(char *file, long file_size) {
     return TRUE;
   }
   emits("\nReceive fail\n");
+
+  /*
+   * Do a flush here to eat any half-read buffer
+   * before we return.
+   */
+  readchar_flush(500);
   return FALSE;
 }
 int XMODEM_Send_File(char *file) {
