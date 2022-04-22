@@ -28,6 +28,7 @@
 #include "amigaterm_serial.h"
 #include "amigaterm_timer.h"
 #include "amigaterm_util.h"
+#include "amigaterm_xmodem.h"
 
 void emits(char string[]);        // AF
 void emit(char c);                // AF
@@ -39,16 +40,12 @@ int current_baud;
 #define DOS_REV 1
 #define INTUITION_REV 1
 #define GRAPHICS_REV 1
+
 /* things for xmodem send and recieve */
-#define SECSIZ 0x80
 #define TTIME 30       /* number of seconds for timeout */
 #define BufSize 0x1000 /* Text buffer */
 #define ERRORMAX 10    /* Max errors before abort */
 #define RETRYMAX 10    /* Maximum retrys before abort */
-#define SOH 1          /* Start of sector char */
-#define EOT 4          /* end of transmission char */
-#define ACK 6          /* acknowledge sector transmission */
-#define NAK 21         /* error in transmission detected */
 
 /* Enable serial hardware flow control */
 #define ENABLE_HWFLOW 1
