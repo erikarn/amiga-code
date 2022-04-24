@@ -407,6 +407,10 @@ serial_write_wait(void)
 {
     char ret;
 
+    if (write_queued == 0) {
+        puts("serial_write_wait: called w/out write queued\n");
+    }
+
     ret = WaitIO((struct IORequest *) Write_Request);
     if (ret == 0) {
         write_queued = 0;
@@ -414,7 +418,7 @@ serial_write_wait(void)
     }
 
     /* Handle an IO error - eg like a hardware error */
-//    printf("%s: WaitIO failed (%d)\n", __func__, ret);
+    printf("%s: WaitIO failed (%d)\n", __func__, ret);
     AbortIO((struct IORequest *) Write_Request); // ?
     SetSignal(0, serial_get_write_signal_bitmask());
     write_queued = 0;
