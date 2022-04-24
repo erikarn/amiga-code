@@ -12,8 +12,14 @@ on things and was both unstable and badly performing.
 * I've actually implemented timers to abort IO, and figured out when
   and how stuff needs handling.
 * Fixed a few message leaks around handling the abort key.
-* The receive path uses bulk transfers rather than byte-at-a-time.
-* Aborts seem to be handled better now.
+* The receive path uses bulk transfers rather than byte-at-a-time -
+  it'll now receive around 1300 bytes/sec at 19200 baud running out
+  of slow/chip ram on a stock Amiga 500.
+* IO aborts/timeouts seem to be handled better now - if you try using too
+  fast a baud rate then the transfer will eventually exit rather than
+  cause the system to hang.
+* ... and that includes actually /handling/ the receive overflow error
+  from the serial driver!
 
 # What's next?
 
