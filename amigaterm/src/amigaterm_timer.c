@@ -88,7 +88,7 @@ timer_timeout_set(int ms)
     pending_timer = 1;
 }
 
-int
+unsigned int
 timer_get_signal_bitmask(void)
 {
 
