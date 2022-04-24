@@ -53,8 +53,6 @@ int current_baud;
 #define ENABLE_HWFLOW 1
 
 static char bufr[BufSize];
-static int timeout = FALSE;
-static int transfer_abort = FALSE;
 static long bytes_xferred;
 static BPTR fh;
 /*   Intuition always wants to see these declarations */
@@ -84,7 +82,6 @@ struct NewWindow NewWindow = {
 };
 struct Window *mywindow;         /* ptr to applications window */
 struct IntuiMessage *NewMessage; /* msg structure for GetMsg() */
-static unsigned char readchar(void);
 /*****************************************************
  *                     File Menu
  *****************************************************/
@@ -233,7 +230,8 @@ int main() {
   ULONG class;
   USHORT code, menunum, itemnum;
   int KeepGoing, capture, send, baud, ret;
-  char c, name[32];
+  char name[32];
+  unsigned char c;
   long file_size;
   FILE *tranr = NULL;
   FILE *trans = NULL;
@@ -416,7 +414,6 @@ int main() {
                 emits("Received\n");
                 emit(8);
               } else {
-                Close(fh);
                 emits("Xmodem Receive Failed\n");
                 emit(8);
               }
@@ -599,13 +596,14 @@ serial_get_abort_keypress_signal_bitmask(void)
 /***************************************************************/
 /*  send char and read char functions for the xmodem function */
 /*************************************************************/
-static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
-  char c = 0;
+
+static serial_retval_t
+readchar_sched(int schedule_next, int timeout_ms, unsigned char *ch) {
+  unsigned char c = 0;
   int rd, ret;
+  serial_retval_t retval = SERIAL_RET_OK;
 
   rd = FALSE;
-
-  timeout = FALSE; transfer_abort = FALSE;
 
   if (timeout_ms > 0) {
       timer_timeout_set(timeout_ms);
@@ -640,14 +638,14 @@ static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
         timer_timeout_complete();
 //        emits("Timeout (readchar_sched)\n");
         rd = FALSE;
-        timeout = TRUE;
+        retval = SERIAL_RET_TIMEOUT;
         break;
     }
 
     if (serial_read_check_keypress_fn() == true) {
       emits("User Cancelled Transfer\n");
       rd = FALSE;
-      transfer_abort = TRUE;
+      retval = SERIAL_RET_ABORT;
       break;
     }
 
@@ -655,25 +653,21 @@ static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
 
   // Abort any pending timer
   timer_timeout_abort();
+  *ch = c;
 
-  return (unsigned char) c;
+  return retval;
 }
 
-/*
- * XXX TODO: ok, it's time to make readchar, readchar_sched, etc
- * return an error enum, rather than setting global variables.
- * That's just a PITA and error prone.
- */
-static unsigned char
-readchar(void)
+serial_retval_t
+readchar(unsigned char *ch)
 {
-    return readchar_sched(1, 1000);
+    return readchar_sched(1, 1000, ch);
 }
 
 /*
  * Read 'len' bytes into the given buffer.
  *
- * Return len if OK, -1 if timeout / cancellation.
+ * Returns a serial_retval_t explaning if it's OK, timeout or aborted.
  *
  * This is a bit dirty for now because of how the current xmodem
  * receive path is written.  readchar() (a) expects a single byte
@@ -685,25 +679,26 @@ readchar(void)
  * the rest.  Once that's done we'll kick-off another single byte
  * read.
  */
-static int readchar_buf(char *buf, int len)
+serial_retval_t
+readchar_buf(char *buf, int len)
 {
 #if 0
+    serial_retval_t retval;
     int i;
     char ch;
 
     for (i = 0; i < len; i++) {
-      ch = readchar();
-      if (timeout == TRUE)
-          return -1;
+      retval = readchar(&ch);
+      if (retval != SERIAL_RET_OK)
+          return retval;
       buf[i] = ch;
     }
-    return len;
+    return SERIAL_RET_OK;
 #else
     int rd, ret;
-    char ch;
+    serial_retval_t retval = SERIAL_RET_OK;
+    unsigned char ch;
     int cur_timeout;
-
-    timeout = FALSE; transfer_abort = FALSE;
 
     /* First character, don't schedule the next read */
     /*
@@ -711,9 +706,11 @@ static int readchar_buf(char *buf, int len)
      * like, could we have some race where both happens and
      * we never schedule a follow-up read?
      */
-    ch = readchar_sched(0, 1000);
-    if ((timeout == TRUE) || (transfer_abort == TRUE))
-        return -1;
+    retval = readchar_sched(0, 1000, &ch);
+    if (retval != SERIAL_RET_OK) {
+      goto done;
+    }
+
     buf[0] = ch;
 
     /* If we don't have any other bytes, finish + schedule read */
@@ -777,7 +774,7 @@ static int readchar_buf(char *buf, int len)
         timer_timeout_complete();
         serial_read_abort();
         rd = FALSE;
-        timeout = TRUE;
+        retval = SERIAL_RET_TIMEOUT;
 //        emits("Timeout (readchar_buf)\n");
         break;
       }
@@ -787,7 +784,7 @@ static int readchar_buf(char *buf, int len)
         emits("User Cancelled Transfer\n");
         /* Abort the current IO */
         serial_read_abort();
-        transfer_abort = TRUE;
+        retval = SERIAL_RET_ABORT;
         break;
       }
 
@@ -805,191 +802,24 @@ static int readchar_buf(char *buf, int len)
      */
     timer_timeout_abort();
 
-    /* Now check if we aborted or not, and return appropriately */
-    if (rd == FALSE) {
-        return -1;
-    }
-    return len;
+    /*
+     * Now return our status here.
+     */
+done:
+    return retval;
 #endif
-}
-
-/*
- * Figure out how many bytes we need to write for this particular
- * transfer.  If file_size is 0 or -1 then it's always the block
- * size, else we ensure only enough bytes are written to satisfy
- * file_size.
- */
-static int
-get_bytes_for_transfer(long file_size, long file_offset, int block_size)
-{
-  long bw;
-
-  if (file_size < 1)
-    return block_size;
-
-  bw = file_size - file_offset;
-  if (bw < block_size)
-    return bw;
-  return block_size;
 }
 
 /***************************************/
 /*  xmodem send and receive functions */
 /*************************************/
 
-/*
- * Xmodem receive.
- *
- * This doesn't at /all/ handle missing characters from the stream,
- * any form of timeout/resyncing the streams, etc.
- */
-int XMODEM_Read_File(char *file, long file_size) {
-  int firstchar, sectnum, sectcurr, sectcomp, errors, errorflag;
-  int ret;
-  unsigned int checksum, j, bufptr;
-  long file_offset = 0L;
-  int bw;
-  bytes_xferred = 0L;
-  if ((fh = Open((UBYTE *)file, MODE_NEWFILE)) < 0) {
-    emits("Cannot Open File\n");
-    return FALSE;
-  } else {
-    emits("Receiving File...\n");
-  }
-
-  timeout = FALSE;
-  transfer_abort = FALSE;
-  sectnum = errors = bufptr = 0;
-
-  // Flush everything first before we kick the remote side
-  readchar_flush(100);
-
-  /* Kick the remote side to start sending */
-  serial_write_char(NAK);
-  firstchar = 0;
-
-  /* Loop until we're done or hit maximum errors */
-  while (firstchar != EOT && errors != ERRORMAX) {
-    errorflag = FALSE;
-    timeout = FALSE;
-    transfer_abort = FALSE;
-
-    /* Loop over until we hit sync char or EOT */
-    do {
-      firstchar = readchar();
-
-      if (transfer_abort == TRUE) {
-        return FALSE;
-      }
-    } while (firstchar != SOH && firstchar != EOT);
-
-    /* If we're at SOH then start reading the current block */
-    if (firstchar == SOH) {
-      /* Read the current sector and its inverted value */
-      sectcurr = readchar();
-      if (transfer_abort == TRUE)
-        return FALSE;
-      if (timeout) {
-          readchar_flush(100);
-          continue;
-      }
-
-      sectcomp = readchar();
-      if (transfer_abort == TRUE)
-        return FALSE;
-      if (timeout == TRUE) {
-          readchar_flush(100);
-          continue;
-      }
-
-      if ((sectcurr + sectcomp) == 255) {
-        /* Check to see if this sector is the next we're expecting */
-        if (sectcurr == ((sectnum + 1) & 0xff)) {
-          checksum = 0;
-          /* Read the 128 byte data block */
-          ret = readchar_buf(&bufr[bufptr], SECSIZ);
-          if (ret < 0) {
-              /* Check to see if we've hit timeout or abort */
-              if (transfer_abort == TRUE)
-                  return FALSE;
-              if (timeout == TRUE) {
-                emits("Timeout receiving block\n");
-                readchar_flush(100);
-                serial_write_char(NAK);
-                errors++;
-                continue;
-              }
-          }
-          /* Calculate the checksum */
-          for (j = bufptr; j < (bufptr + SECSIZ); j++) {
-              checksum = (checksum + bufr[j]) & 0xff;
-          }
-          /* Read / check checksum */
-          if (checksum == readchar()) {
-            errors = 0;
-            sectnum++;
-            bufptr += SECSIZ;
-            bytes_xferred += SECSIZ;
-            /* Verified! */
-            if (bufptr == BufSize) {
-              bufptr = 0;
-              bw = get_bytes_for_transfer(file_size, file_offset, BufSize);
-              if ((bw > 0) && (Write(fh, bufr, bw) == EOF)) {
-                emits("Error Writing File\n");
-                return FALSE;
-              };
-              file_offset += bw;
-            };
-            serial_write_char(ACK);
-          } else {
-            emits("Invalid checksum\n");
-            errorflag = TRUE;
-          }
-        } else {
-          if (sectcurr == (sectnum & 0xff)) {
-            emits("Received Duplicate Sector\n");
-            serial_write_char(ACK);
-          } else {
-            emits("Wrong sector offset\n");
-            errorflag = TRUE;
-          }
-        }
-      } else {
-        emits("Invalid sector bytes\n");
-        errorflag = TRUE;
-      }
-    }
-
-    if (errorflag == TRUE) {
-      errors++;
-      emits("Sending NAK\n");
-      readchar_flush(100);
-      serial_write_char(NAK);
-    }
-  }; /* end while */
-
-  if ((firstchar == EOT) && (errors < ERRORMAX)) {
-    serial_write_char(ACK);
-    bw = get_bytes_for_transfer(file_size, file_offset, bufptr);
-    if (bw > 0)
-        Write(fh, bufr, bw);
-    Close(fh);
-    emits("\nReceive OK\n");
-    return TRUE;
-  }
-  emits("\nReceive fail\n");
-
-  /*
-   * Do a flush here to eat any half-read buffer
-   * before we return.
-   */
-  readchar_flush(500);
-  return FALSE;
-}
 int XMODEM_Send_File(char *file) {
-  int sectnum, bytes_to_send, size, attempts, c;
+  int sectnum, bytes_to_send, size, attempts;
   unsigned checksum, j, bufptr;
-  timeout = FALSE;
+  unsigned char c;
+  serial_retval_t retval;
+
   bytes_xferred = 0;
   if ((fh = Open((UBYTE *)file, MODE_OLDFILE)) < 0) {
     emits("Cannot Open Send File\n");
@@ -1000,8 +830,15 @@ int XMODEM_Send_File(char *file) {
   sectnum = 1;
   /* wait for sync char */
   j = 1;
-  while (((c = readchar()) != NAK) && (j++ < ERRORMAX))
-    ;
+  do {
+    c = 0;
+    retval = readchar(&c);
+    if (retval == SERIAL_RET_ABORT) {
+      emits("\nUser cancelled transfer\n");
+      return FALSE;
+    }
+  } while ((c != NAK) && (j++ < ERRORMAX));
+
   if (j >= (ERRORMAX)) {
     emits("\nReceiver not sending NAKs\n");
     return FALSE;
@@ -1041,9 +878,17 @@ int XMODEM_Send_File(char *file) {
             serial_write_char(0);
         serial_write_char(checksum & 0xff);
         attempts++;
-        c = readchar();
-        if (timeout == TRUE)
+        retval = readchar(&c);
+        switch (retval) {
+        case SERIAL_RET_OK:
+          break;
+        case SERIAL_RET_TIMEOUT:
+          emits("\nTimeout waiting for ACK/NACK\n");
+          c = 0;
+          break;
+        case SERIAL_RET_ABORT:
           return FALSE;
+        }
       } while ((c != ACK) && (attempts != RETRYMAX));
       bufptr += size;
       bytes_xferred += size;
@@ -1061,11 +906,22 @@ int XMODEM_Send_File(char *file) {
     return FALSE;
   } else {
     attempts = 0;
+    bool timeout = false;
     do {
       serial_write_char(EOT);
       attempts++;
-    } while ((readchar() != ACK) && (attempts != RETRYMAX) &&
-             (timeout == FALSE));
+      retval = readchar(&c);
+      switch (retval) {
+      case SERIAL_RET_OK:
+        break;
+      case SERIAL_RET_ABORT:
+        return FALSE;
+      case SERIAL_RET_TIMEOUT:
+        timeout = true;
+        break;
+      }
+    } while ((c != ACK) && (attempts != RETRYMAX) &&
+      (timeout == false));
     if (attempts == RETRYMAX)
       emits("\nNo Acknowledgment Of End Of File\n");
   };

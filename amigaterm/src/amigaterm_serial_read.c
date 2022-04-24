@@ -44,7 +44,7 @@ extern void emits(const char *);
 serial_retval_t
 readchar_flush(int timeout_ms)
 {
-	char c;
+	unsigned char c;
 	int ret;
 	serial_retval_t retval = SERIAL_RET_OK;
 

@@ -15,7 +15,7 @@ extern void serial_close(void);
 /* Read routines */
 extern void serial_read_start(void);
 extern void serial_read_start_buf(char *buf, int len);
-extern int serial_get_char(char *ch);
+extern int serial_get_char(unsigned char *ch);
 extern unsigned int serial_get_read_signal_bitmask(void);
 extern void serial_read_abort(void);
 extern int serial_read_is_ready(void);

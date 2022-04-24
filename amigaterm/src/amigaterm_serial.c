@@ -282,7 +282,7 @@ serial_read_wait(void)
  * and -1 if there was a read error.
  */
 int
-serial_get_char(char *ch)
+serial_get_char(unsigned char *ch)
 {
 
     if (read_queued == 0)
@@ -302,7 +302,7 @@ serial_get_char(char *ch)
         return -1;
     read_queued = 0;
 
-    *ch = rs_in[0];
+    *ch = (unsigned char) rs_in[0];
     return 1;
 }
 
