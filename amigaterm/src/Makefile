@@ -17,7 +17,10 @@ amigaterm_timer.o: amigaterm_timer.c
 
 amigaterm_xmodem_recv.o: amigaterm_xmodem_recv.c
 
-amigaterm: amigaterm.o amigaterm_serial.o amigaterm_util.o amigaterm_timer.o amigaterm_serial_read.o amigaterm_xmodem_recv.o
+amigaterm_xmodem_send.o: amigaterm_xmodem_send.c
 
+amigaterm: amigaterm.o amigaterm_serial.o amigaterm_util.o \
+	   amigaterm_timer.o amigaterm_serial_read.o \
+	   amigaterm_xmodem_recv.o amigaterm_xmodem_send.o
 clean:
 	$(RM) -f amigaterm *.o

@@ -52,9 +52,6 @@ int current_baud;
 /* Enable serial hardware flow control */
 #define ENABLE_HWFLOW 1
 
-static char bufr[BufSize];
-static long bytes_xferred;
-static BPTR fh;
 /*   Intuition always wants to see these declarations */
 struct IntuitionBase *IntuitionBase;
 struct GfxBase *GfxBase;
@@ -425,7 +422,6 @@ int main() {
                 emits("Sent\n");
                 emit(8);
               } else {
-                Close(fh);
                 emits("\nXmodem Send Failed\n");
                 emit(8);
               }
@@ -810,123 +806,6 @@ done:
 #endif
 }
 
-/***************************************/
-/*  xmodem send and receive functions */
-/*************************************/
-
-int XMODEM_Send_File(char *file) {
-  int sectnum, bytes_to_send, size, attempts;
-  unsigned checksum, j, bufptr;
-  unsigned char c;
-  serial_retval_t retval;
-
-  bytes_xferred = 0;
-  if ((fh = Open((UBYTE *)file, MODE_OLDFILE)) < 0) {
-    emits("Cannot Open Send File\n");
-    return FALSE;
-  } else
-    emits("Sending File...");
-  attempts = 0;
-  sectnum = 1;
-  /* wait for sync char */
-  j = 1;
-  do {
-    c = 0;
-    retval = readchar(&c);
-    if (retval == SERIAL_RET_ABORT) {
-      emits("\nUser cancelled transfer\n");
-      return FALSE;
-    }
-  } while ((c != NAK) && (j++ < ERRORMAX));
-
-  if (j >= (ERRORMAX)) {
-    emits("\nReceiver not sending NAKs\n");
-    return FALSE;
-  }
-  while ((bytes_to_send = Read(fh, bufr, BufSize)) && attempts != RETRYMAX) {
-    if (bytes_to_send == EOF) {
-      emits("\nError Reading File\n");
-      return FALSE;
-    };
-    bufptr = 0;
-    while (bytes_to_send > 0 && attempts != RETRYMAX) {
-      attempts = 0;
-      do {
-        serial_write_char(SOH);
-        serial_write_char(sectnum);
-        serial_write_char(~sectnum);
-        checksum = 0;
-        size = SECSIZ <= bytes_to_send ? SECSIZ : bytes_to_send;
-        bytes_to_send -= size;
-        for (j = bufptr; j < (bufptr + SECSIZ); j++)
-          /*
-           * Here's the bit that writes the file content out
-           * as a bulk write.
-           *
-           * Note that it will fill the rest of the 128 byte
-           * xmodem transfer with zeros if the send buffer
-           * isn't big enough.
-           *
-           * This needs to be taken into account when attempting
-           * to convert this particular spot to use a bulk async
-           * write.
-           */
-          if (j < (bufptr + size)) {
-            serial_write_char(bufr[j]);
-            checksum += bufr[j];
-          } else
-            serial_write_char(0);
-        serial_write_char(checksum & 0xff);
-        attempts++;
-        retval = readchar(&c);
-        switch (retval) {
-        case SERIAL_RET_OK:
-          break;
-        case SERIAL_RET_TIMEOUT:
-          emits("\nTimeout waiting for ACK/NACK\n");
-          c = 0;
-          break;
-        case SERIAL_RET_ABORT:
-          return FALSE;
-        }
-      } while ((c != ACK) && (attempts != RETRYMAX));
-      bufptr += size;
-      bytes_xferred += size;
-      /* emits("Block "); */
-      /* stci_d(numb,sectnum,i); */
-      /* snprintf(numb, 10, "%u", sectnum); */
-      /* emits(numb); */
-      /* emits(" sent\n"); */
-      sectnum++;
-    }
-  }
-  Close(fh);
-  if (attempts == RETRYMAX) {
-    emits("\nNo Acknowledgment Of Sector, Aborting\n");
-    return FALSE;
-  } else {
-    attempts = 0;
-    bool timeout = false;
-    do {
-      serial_write_char(EOT);
-      attempts++;
-      retval = readchar(&c);
-      switch (retval) {
-      case SERIAL_RET_OK:
-        break;
-      case SERIAL_RET_ABORT:
-        return FALSE;
-      case SERIAL_RET_TIMEOUT:
-        timeout = true;
-        break;
-      }
-    } while ((c != ACK) && (attempts != RETRYMAX) &&
-      (timeout == false));
-    if (attempts == RETRYMAX)
-      emits("\nNo Acknowledgment Of End Of File\n");
-  };
-  return TRUE;
-}
 /*************************************************
  *  function to output ascii chars to window
  *************************************************/
