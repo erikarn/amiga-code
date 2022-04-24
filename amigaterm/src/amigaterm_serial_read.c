@@ -189,7 +189,7 @@ readchar_buf(char *buf, int len)
 #if 0
     serial_retval_t retval;
     int i;
-    char ch;
+    unsigned char ch;
 
     for (i = 0; i < len; i++) {
       retval = readchar(&ch);
@@ -231,7 +231,7 @@ readchar_buf(char *buf, int len)
     if (current_baud == 0) {
         cur_timeout = 1000;
     } else {
-        cur_timeout = (128 * 15 * 1000) / current_baud;
+        cur_timeout = (len * 15 * 1000) / current_baud;
     }
     if (cur_timeout < 1000)
         cur_timeout = 1000;
