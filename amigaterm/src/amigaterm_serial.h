@@ -1,6 +1,12 @@
 #ifndef __AMIGATERM_SERIAL_H__
 #define __AMIGATERM_SERIAL_H__
 
+typedef enum {
+	SERIAL_RET_OK = 0,
+	SERIAL_RET_TIMEOUT = 1,
+	SERIAL_RET_ABORT = 2,
+} serial_retval_t;
+
 /* Control routines */
 extern int serial_init(int baud, int enable_hwflow);
 extern void serial_set_baud(int baud);

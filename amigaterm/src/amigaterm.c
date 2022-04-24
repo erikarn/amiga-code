@@ -26,11 +26,12 @@
 #include <stdio.h>                // for NULL, puts, fclose, fopen, EOF, getc
 
 #include "amigaterm_serial.h"
+#include "amigaterm_serial_read.h"
 #include "amigaterm_timer.h"
 #include "amigaterm_util.h"
 #include "amigaterm_xmodem.h"
 
-void emits(char string[]);        // AF
+void emits(const char *str); // AF
 void emit(char c);                // AF
 void filename(char name[], int len); // AF
 long filesize(void);               // Read a file size, or default to -1
@@ -550,12 +551,15 @@ long filesize(void)
 /********************************/
 /*  function to print a string */
 /******************************/
-void emits(char string[]) {
+void
+emits(const char *str)
+{
   int i;
   char c;
   i = 0;
-  while (string[i] != 0) {
-    c = string[i];
+
+  while (str[i] != 0) {
+    c = str[i];
     if (c == 10)
       c = 13;
     emit(c);
@@ -638,78 +642,6 @@ static unsigned char
 readchar(void)
 {
     return readchar_sched(1, 1000);
-}
-
-/*
- * Empty the receive buffer until it times out.
- *
- * This is called in the error path if we get a receive
- * error (eg a hardware error) during packet receive.
- * This will keep looping over and reading data in the most
- * inefficient way (and tossing it) until timeout.
- */
-static int
-readchar_flush(int timeout_ms)
-{
-	char c;
-	int ret;
-
-	timeout = FALSE; transfer_abort = FALSE;
-
-	if (timeout_ms == 0)
-		timeout_ms = 1;
-
-	/* Set initial timer */
-	timer_timeout_set(timeout_ms);
-
-	/*
-	 * Loop over and keep reading characters until we hit timeout.
-	 */
-	while (1) {
-		/*
-		 * Don't wait here if the serial port is using QUICK
-		 * and is ready.
-		 */
-		if (serial_read_is_ready() == 0) {
-			Wait(serial_get_read_signal_bitmask() |
-			    (1 << mywindow->UserPort->mp_SigBit) |
-			    (timer_get_signal_bitmask()));
-		}
-
-		/* Check if we hit our timeout timer */
-		if (timer_timeout_fired()) {
-			timer_timeout_complete();
-			break;
-		}
-
-		/* Try to read a character, but don't block */
-		ret = serial_get_char(&c);
-		if (ret == 0) {
-			timer_timeout_abort();
-			timer_timeout_set(timeout_ms);
-		} else if (ret > 0) {
-			/* Got a char */
-			serial_read_start();
-		} else if (ret < 0) {
-			serial_read_start();
-		}
-
-		if ((NewMessage = (struct IntuiMessage *)
-		    GetMsg(mywindow->UserPort))) {
-			if ((NewMessage->Class) == RAWKEY) {
-				if ((NewMessage->Code) == 69) {
-					emits("User Cancelled Transfer\n");
-					transfer_abort = TRUE;
-					break;
-				}
-			}
-		}
-	}
-
-	/* Not sure - do I need to do this in case it fired? */
-	timer_timeout_abort();
-
-	return (1);
 }
 
 /*
