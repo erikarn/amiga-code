@@ -80,6 +80,11 @@ XMODEM_Send_File(char *file)
       goto error;
     };
     bufptr = 0;
+    /* Blank the rest of the buffer out so we can bulk send */
+    if (bytes_to_send < BufSize) {
+      memset(bufr + bytes_to_send, 0, BufSize - bytes_to_send);
+    }
+
     while (bytes_to_send > 0 && attempts != RETRYMAX) {
       attempts = 0;
       do {
@@ -89,26 +94,24 @@ XMODEM_Send_File(char *file)
         checksum = 0;
         size = SECSIZ <= bytes_to_send ? SECSIZ : bytes_to_send;
         bytes_to_send -= size;
+
+        /* For bulk writes we still need to update the checksum first */
         for (j = bufptr; j < (bufptr + SECSIZ); j++) {
-          /*
-           * Here's the bit that writes the file content out
-           * as a bulk write.
-           *
-           * Note that it will fill the rest of the 128 byte
-           * xmodem transfer with zeros if the send buffer
-           * isn't big enough.
-           *
-           * This needs to be taken into account when attempting
-           * to convert this particular spot to use a bulk async
-           * write.
-           */
-          if (j < (bufptr + size)) {
+            /*
+             * The rest of the buffer above was zeroed, so
+             * we can just write it all out and it'll be
+             * padded for us.
+             */
+#if 1
             serial_write_char(bufr[j]);
+#endif
             checksum += bufr[j];
-          } else {
-            serial_write_char(0);
-          }
         }
+#if 0
+        /* Here's where we try to do an actual bulk write! */
+        serial_write_start_buf(&bufr[j], SECSIZ);
+        serial_write_wait();
+#endif
         serial_write_char(checksum & 0xff);
         attempts++;
 #if 0
@@ -138,10 +141,19 @@ XMODEM_Send_File(char *file)
       sectnum++;
     }
   }
+
+  /*
+   * We're done, either because we finished OK or didn't finish
+   * OK.  Either way, close the FH.
+   *
+   * After this point we can't just goto error; that'll double close
+   * the FH.
+   */
   Close(fh);
+
   if (attempts == RETRYMAX) {
     emits("\nNo Acknowledgment Of Sector, Aborting\n");
-    goto error;
+    goto finish_error;
   } else {
     attempts = 0;
     bool timeout = false;
@@ -153,7 +165,7 @@ XMODEM_Send_File(char *file)
       case SERIAL_RET_OK:
         break;
       case SERIAL_RET_ABORT:
-        goto error;
+        goto finish_error;
       case SERIAL_RET_TIMEOUT:
         timeout = true;
         break;
@@ -166,5 +178,6 @@ XMODEM_Send_File(char *file)
   return TRUE;
 error:
   Close(fh);
+finish_error:
   return FALSE;
 }
