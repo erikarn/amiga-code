@@ -352,13 +352,13 @@ serial_get_write_signal_bitmask(void)
 /*
  * Write a single character to the serial port.
  *
- * This blocks; we currently don't support non-blocking serial
- * writes here.
+ * This blocks until completion or error.
  */
 void
 serial_write_char(char c)
 {
     rs_out[0] = c;
+    Write_Request->IOSer.io_Command = CMD_WRITE;
     Write_Request->IOSer.io_Data = (APTR)&rs_out[0];
     Write_Request->IOSer.io_Length = 1;
     DoIO((struct IORequest *)Write_Request);
@@ -441,7 +441,7 @@ serial_write_start_buf(char *buf, int len)
   if (write_queued == 1)
       puts("serial_write_start_buf: called w/ write_queued=1!\n");
 
-  Write_Request->IOSer.io_Command = CMD_READ;
+  Write_Request->IOSer.io_Command = CMD_WRITE;
   Write_Request->IOSer.io_Length = len;
   Write_Request->IOSer.io_Data = (APTR) buf;
   Write_Request->IOSer.io_Flags = IOF_QUICK;
