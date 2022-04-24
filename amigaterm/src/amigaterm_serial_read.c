@@ -18,12 +18,20 @@
 #include <clib/alib_protos.h>     // for DeletePort, BeginIO
 #include <exec/types.h>           // for FALSE, TRUE, UBYTE, CONST_STRPTR
 #include <stdio.h>                // for NULL, puts, fclose, fopen, EOF, getc
+#include <stdbool.h>
 
 #include "amigaterm_serial.h"
 #include "amigaterm_timer.h"
 #include "amigaterm_util.h"
 
 #include "amigaterm_serial_read.h"
+
+/*
+ * Things we link to need to define these.
+ */
+extern bool serial_read_check_keypress_fn(void);
+extern unsigned int serial_get_abort_keypress_signal_bitmask(void);
+extern void emits(const char *);
 
 /*
  * Empty the receive buffer until it times out.
@@ -38,6 +46,7 @@ readchar_flush(int timeout_ms)
 {
 	char c;
 	int ret;
+	serial_retval_t retval = SERIAL_RET_OK;
 
 	if (timeout_ms == 0)
 		timeout_ms = 1;
@@ -55,7 +64,8 @@ readchar_flush(int timeout_ms)
 		 */
 		if (serial_read_is_ready() == 0) {
 			Wait(serial_get_read_signal_bitmask() |
-			    (timer_get_signal_bitmask()));
+			    serial_get_abort_keypress_signal_bitmask() |
+			    timer_get_signal_bitmask());
 		}
 
 		/* Check if we hit our timeout timer */
@@ -75,10 +85,16 @@ readchar_flush(int timeout_ms)
 		} else if (ret < 0) {
 			serial_read_start();
 		}
+
+		if (serial_read_check_keypress_fn() == true) {
+			emits("\nUser cancelled transfer\n");
+			retval = SERIAL_RET_ABORT;
+			break;
+		}
 	}
 
 	/* Not sure - do I need to do this in case it fired? */
 	timer_timeout_abort();
 
-	return (SERIAL_RET_OK);
+	return (retval);
 }

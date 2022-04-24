@@ -24,6 +24,7 @@
 #include <intuition/intuition.h>  // for MenuItem, IntuiText, Menu, Window
 #include <intuition/screens.h>    // for RAWKEY, CLOSEWINDOW, MENUPICK
 #include <stdio.h>                // for NULL, puts, fclose, fopen, EOF, getc
+#include <stdbool.h>
 
 #include "amigaterm_serial.h"
 #include "amigaterm_serial_read.h"
@@ -567,6 +568,34 @@ emits(const char *str)
   }
 }
 
+bool
+serial_read_check_keypress_fn(void)
+{
+  struct IntuiMessage *msg;
+  bool retval = false;
+
+  msg = (struct IntuiMessage *) GetMsg(mywindow->UserPort);
+  if (msg == NULL)
+    return false;
+
+  if ((msg->Class) == RAWKEY) {
+    if ((msg->Code) == 69) {
+      retval = true;
+    }
+  }
+
+  ReplyMsg((struct Message *)msg);
+
+  return retval;
+}
+
+unsigned int
+serial_get_abort_keypress_signal_bitmask(void)
+{
+  return (1 << mywindow->UserPort->mp_SigBit);
+}
+
+
 /***************************************************************/
 /*  send char and read char functions for the xmodem function */
 /*************************************************************/
@@ -586,7 +615,7 @@ static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
     /* Don't wait here if the serial port is using QUICK and is ready */
     if (serial_read_is_ready() == 0) {
         Wait(serial_get_read_signal_bitmask() |
-             (1 << mywindow->UserPort->mp_SigBit) |
+             (serial_get_abort_keypress_signal_bitmask()) |
              (timer_get_signal_bitmask()));
     }
     ret = serial_get_char(&c);
@@ -615,16 +644,13 @@ static unsigned char readchar_sched(int schedule_next, int timeout_ms) {
         break;
     }
 
-    if ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
-      if ((NewMessage->Class) == RAWKEY) {
-        if ((NewMessage->Code) == 69) {
-          emits("User Cancelled Transfer\n");
-          rd = FALSE;
-          transfer_abort = TRUE;
-          break;
-        }
-      }
+    if (serial_read_check_keypress_fn() == true) {
+      emits("User Cancelled Transfer\n");
+      rd = FALSE;
+      transfer_abort = TRUE;
+      break;
     }
+
   }
 
   // Abort any pending timer
@@ -724,8 +750,8 @@ static int readchar_buf(char *buf, int len)
       /* Don't wait here if the serial port is using QUICK and is ready */
       if (serial_read_is_ready() == 0) {
           Wait(serial_get_read_signal_bitmask() |
-               timer_get_signal_bitmask() |
-               (1 << mywindow->UserPort->mp_SigBit));
+               (serial_get_abort_keypress_signal_bitmask()) |
+               timer_get_signal_bitmask());
       }
 
       /* Check if the serial IO is completed */
@@ -757,16 +783,12 @@ static int readchar_buf(char *buf, int len)
       }
 
       /* Check for being cancelled */
-      if ((NewMessage = (struct IntuiMessage *)GetMsg(mywindow->UserPort))) {
-        if ((NewMessage->Class) == RAWKEY) {
-          if ((NewMessage->Code) == 69) {
-            emits("User Cancelled Transfer\n");
-            /* Abort the current IO */
-            serial_read_abort();
-            transfer_abort = TRUE;
-            break;
-          }
-        }
+      if (serial_read_check_keypress_fn() == true) {
+        emits("User Cancelled Transfer\n");
+        /* Abort the current IO */
+        serial_read_abort();
+        transfer_abort = TRUE;
+        break;
       }
 
     }
