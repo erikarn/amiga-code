@@ -66,6 +66,10 @@ XMODEM_Send_File(char *file)
     }
   } while ((c != NAK) && (j++ < ERRORMAX));
 
+#if 0
+  emits("Got sync char\n");
+#endif
+
   if (j >= (ERRORMAX)) {
     emits("\nReceiver not sending NAKs\n");
     goto error;
@@ -85,7 +89,7 @@ XMODEM_Send_File(char *file)
         checksum = 0;
         size = SECSIZ <= bytes_to_send ? SECSIZ : bytes_to_send;
         bytes_to_send -= size;
-        for (j = bufptr; j < (bufptr + SECSIZ); j++)
+        for (j = bufptr; j < (bufptr + SECSIZ); j++) {
           /*
            * Here's the bit that writes the file content out
            * as a bulk write.
@@ -101,10 +105,15 @@ XMODEM_Send_File(char *file)
           if (j < (bufptr + size)) {
             serial_write_char(bufr[j]);
             checksum += bufr[j];
-          } else
+          } else {
             serial_write_char(0);
+          }
+        }
         serial_write_char(checksum & 0xff);
         attempts++;
+#if 0
+        emits("Waiting for ACK/NACK\n");
+#endif
         retval = readchar(&c);
         switch (retval) {
         case SERIAL_RET_OK:
@@ -119,11 +128,13 @@ XMODEM_Send_File(char *file)
       } while ((c != ACK) && (attempts != RETRYMAX));
       bufptr += size;
       bytes_xferred += size;
-      /* emits("Block "); */
-      /* stci_d(numb,sectnum,i); */
-      /* snprintf(numb, 10, "%u", sectnum); */
-      /* emits(numb); */
-      /* emits(" sent\n"); */
+#if 0
+      emits("Block ");
+      stci_d(numb,sectnum,i);
+      snprintf(numb, 10, "%u", sectnum);
+      emits(numb);
+      emits(" sent\n");
+#endif
       sectnum++;
     }
   }
