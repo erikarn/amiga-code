@@ -102,21 +102,22 @@ XMODEM_Send_File(char *file)
              * we can just write it all out and it'll be
              * padded for us.
              */
-#if 1
-            serial_write_char(bufr[j]);
-#endif
             checksum += bufr[j];
         }
-#if 0
-        /* Here's where we try to do an actual bulk write! */
-        serial_write_start_buf(&bufr[j], SECSIZ);
+        /*
+         * Do the write, block for now.  Later on it'd
+         * be good to wait for UI events, timer events and
+         * serial driver events so we can handle an abort, error
+         * and timeout.
+         */
+        serial_write_start_buf(&bufr[bufptr], SECSIZ);
         serial_write_wait();
-#endif
+
+        /*
+         * Write out a checksum.
+         */
         serial_write_char(checksum & 0xff);
         attempts++;
-#if 0
-        emits("Waiting for ACK/NACK\n");
-#endif
         retval = readchar(&c);
         switch (retval) {
         case SERIAL_RET_OK:
@@ -131,13 +132,6 @@ XMODEM_Send_File(char *file)
       } while ((c != ACK) && (attempts != RETRYMAX));
       bufptr += size;
       bytes_xferred += size;
-#if 0
-      emits("Block ");
-      stci_d(numb,sectnum,i);
-      snprintf(numb, 10, "%u", sectnum);
-      emits(numb);
-      emits(" sent\n");
-#endif
       sectnum++;
     }
   }
