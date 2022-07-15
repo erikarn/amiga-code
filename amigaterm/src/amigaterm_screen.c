@@ -60,6 +60,9 @@ struct NewWindow NewWindow = {
 };
 struct Window *mywindow;         /* ptr to applications window */
 
+static short screen_x = 3;
+static short screen_y = 17;
+
 int
 screen_init(void)
 {
@@ -91,47 +94,30 @@ screen_cleanup(void)
 }
 
 
-/********************************/
-/*  function to print a string */
-/******************************/
-void
-emits(const char *str)
-{
-  int i;
-  char c;
-  i = 0;
+/*
+ * Display ASCII characters, don't draw the cursor.
+ */
+static void _emit(char c) {
+  short xmax, ymax;
+  short cx, cy;
 
-  while (str[i] != 0) {
-    c = str[i];
-    if (c == 10)
-      c = 13;
-    emit(c);
-    i += 1;
-  }
-}
-
-/*************************************************
- *  function to output ascii chars to window
- *************************************************/
-void emit(char c) {
-  static short x = 3;
-  static short y = 17;
-  short xmax, ymax, cx, cy;
   xmax = mywindow->Width;
   ymax = mywindow->Height;
+
   /* cursor */
-  if (x > (xmax - 31)) {
+  if (screen_x > (xmax - 31)) {
     cx = 9;
-    cy = y + 8;
+    cy = screen_y + 8;
   } else {
-    cx = x + 8;
-    cy = y;
+    cx = screen_x + 8;
+    cy = screen_y;
   }
   if (cy > (ymax - 2)) {
     cx = 9;
     cy -= 8;
   }
 
+#if 1
   /* XOR bits into raster */
   SetDrMd(mywindow->RPort, COMPLEMENT);
 
@@ -142,34 +128,35 @@ void emit(char c) {
 
   /* 2 colours? Or planes? Into raster */
   SetDrMd(mywindow->RPort, JAM2);
+#endif
 
-  if (x > (xmax - 31)) {
-    x = 3;
-    y += 8;
+  if (screen_x > (xmax - 31)) {
+    screen_x = 3;
+    screen_y += 8;
   }
-  if (y > (ymax - 2)) {
-    x = 3;
-    y -= 8;
+  if (screen_y > (ymax - 2)) {
+    screen_x = 3;
+    screen_y -= 8;
   }
-  Move(mywindow->RPort, x, y);
+  Move(mywindow->RPort, screen_x, screen_y);
   switch (c) {
   case '\t':
-    x += 60;
+    screen_x += 60;
     break;
   case '\n':
     break;
   case 13: /* newline */
-    x = 3;
-    y += 8;
+    screen_x = 3;
+    screen_y += 8;
     break;
   case 8: /* backspace */
-    x -= 8;
-    if (x < 3)
-      x = 3;
+    screen_x -= 8;
+    if (screen_x < 3)
+      screen_x = 3;
     break;
   case 12: /* page */
-    x = 3;
-    y = 17;
+    screen_x = 3;
+    screen_y = 17;
     SetAPen(mywindow->RPort, 0);
     RectFill(mywindow->RPort, 2, 10, xmax - 19, ymax - 7);
     SetAPen(mywindow->RPort, 1);
@@ -180,15 +167,16 @@ void emit(char c) {
     break;
   default:
     Text(mywindow->RPort, (UBYTE *)&c, 1);
-    x += 8;
+    screen_x += 8;
   } /* end of switch */
-  /* cursor */
-  if (x > (xmax - 31)) {
+
+  /* advance cursor, scroll if needed */
+  if (screen_x > (xmax - 31)) {
     cx = 9;
-    cy = y + 8;
+    cy = screen_y + 8;
   } else {
-    cx = x + 8;
-    cy = y;
+    cx = screen_x + 8;
+    cy = screen_y;
   }
   if (cy > (ymax - 2)) {
     cx = 9;
@@ -196,8 +184,51 @@ void emit(char c) {
     ScrollRaster(mywindow->RPort, 0, 8, 2, 10, xmax - 20, ymax - 2);
   }
 
-  /* Cursor */
+  (void) cx; (void) cy;
+
+#if 1
+  /* Draw cursor */
   SetAPen(mywindow->RPort, 3);
   RectFill(mywindow->RPort, cx - 7, cy - 6, cx, cy + 1);
   SetAPen(mywindow->RPort, 1);
+#endif
+
+}
+
+/*
+ * Echo a single character.
+ */
+void
+emit(char c)
+{
+
+  /* Normal plotting */
+  SetDrMd(mywindow->RPort, JAM2);
+  _emit(c);
+
+  /* XXX draw cursor */
+}
+
+/*
+ * Echo a string.
+ */
+void
+emits(const char *str)
+{
+  int i;
+  char c;
+  i = 0;
+
+  /* Normal plotting */
+  SetDrMd(mywindow->RPort, JAM2);
+
+  while (str[i] != 0) {
+    c = str[i];
+    if (c == 10)
+      c = 13;
+    emit(c);
+    i += 1;
+  }
+
+  /* XXX draw cursor */
 }
