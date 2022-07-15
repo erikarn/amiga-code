@@ -213,6 +213,10 @@ int XMODEM_Read_File(char *file, long file_size) {
     }
   }; /* end while */
 
+
+
+  /* XXX TODO: seeing some transfers fail but hit Receive OK; figure out why */
+
   if ((firstchar == EOT) && (errors < ERRORMAX)) {
     serial_write_char(ACK);
     bw = get_bytes_for_transfer(file_size, file_offset, bufptr);
