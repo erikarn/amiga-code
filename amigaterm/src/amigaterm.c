@@ -40,12 +40,6 @@ int XMODEM_Send_File(char *file); // AF
 int current_baud;
 #define DOS_REV 1
 
-/* things for xmodem send and recieve */
-#define TTIME 30       /* number of seconds for timeout */
-#define BufSize 0x1000 /* Text buffer */
-#define ERRORMAX 10    /* Max errors before abort */
-#define RETRYMAX 10    /* Maximum retrys before abort */
-
 /* Enable serial hardware flow control */
 #define ENABLE_HWFLOW 1
 
@@ -358,12 +352,6 @@ int main() {
               emits("\nFile size (or leave blank to not truncate):");
               file_size = filesize();
 
-              /*
-               * Ok, it's time to clean up how this receive path
-               * works, and let's /begin/ by refactoring it so
-               * it's cleaner and will close its own damned file
-               * handle.
-               */
               if (XMODEM_Read_File(name, file_size)) {
                 emits("Received\n");
                 emit(8);
