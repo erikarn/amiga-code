@@ -39,23 +39,29 @@ int
 serial_init(int baud, int enable_hwflow)
 {
 
+  /* Create two ports - one for serial read, one for serial write */
   serial_read_port = CreatePort((CONST_STRPTR) "Read_RS", 0);
-  if (serial_read_port == NULL)
+  if (serial_read_port == NULL) {
     goto error;
+  }
 
   serial_write_port = CreatePort((CONST_STRPTR) "Write_RS", 0);
-  if (serial_write_port == NULL)
+  if (serial_write_port == NULL) {
     goto error;
+  }
 
-
+  /* Allocate read request */
   Read_Request = (struct IOExtSer *) CreateExtIO(serial_read_port,
     sizeof(struct IOExtSer));
-  if (Read_Request == NULL)
+  if (Read_Request == NULL) {
     goto error;
+  }
 
   Read_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
-  if (enable_hwflow)
+  if (enable_hwflow) {
     Read_Request->io_SerFlags |= SERF_7WIRE;
+  }
+
   Read_Request->IOSer.io_Flags = 0;
 
   if (OpenDevice((CONST_STRPTR)SERIALNAME, 0, (struct IORequest *)Read_Request,
@@ -69,14 +75,17 @@ serial_init(int baud, int enable_hwflow)
   Read_Request->IOSer.io_Data = (APTR)&rs_in[0];
   Read_Request->IOSer.io_Flags = 0;
 
+  /* Allocate write request */
   Write_Request = (struct IOExtSer *) CreateExtIO(serial_write_port,
     sizeof(struct IOExtSer));
-  if (Read_Request == NULL)
+  if (Write_Request == NULL) {
     goto error;
+  }
 
   Write_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
-  if (enable_hwflow)
+  if (enable_hwflow) {
     Write_Request->io_SerFlags |= SERF_7WIRE;
+  }
 
   if (OpenDevice((CONST_STRPTR)SERIALNAME, 0, (struct IORequest *)Write_Request,
                  0)) {
@@ -88,10 +97,13 @@ serial_init(int baud, int enable_hwflow)
   Write_Request->IOSer.io_Command = CMD_WRITE;
   Write_Request->IOSer.io_Length = 1;
   Write_Request->IOSer.io_Data = (APTR)&rs_out[0];
+
   Read_Request->io_SerFlags = SERF_SHARED | SERF_XDISABLED;
-#if ENABLE_HWFLOW
   Read_Request->io_SerFlags |= SERF_7WIRE;
-#endif
+  if (enable_hwflow) {
+    Read_Request->io_SerFlags |= SERF_7WIRE;
+  }
+
   Read_Request->io_Baud = baud;
   Read_Request->io_ReadLen = 8;
   Read_Request->io_WriteLen = 8;
@@ -105,17 +117,21 @@ serial_init(int baud, int enable_hwflow)
   return (1);
 
 error:
-  if (Read_Request != NULL)
+  if (Read_Request != NULL) {
     DeleteExtIO((struct IORequest *) Read_Request);
+  }
 
-  if (serial_read_port != NULL)
+  if (serial_read_port != NULL) {
     DeletePort(serial_read_port);
+  }
 
-  if (Write_Request != NULL)
+  if (Write_Request != NULL) {
     DeleteExtIO((struct IORequest *) Write_Request);
+  }
 
-  if (serial_write_port != NULL)
+  if (serial_write_port != NULL) {
     DeletePort(serial_write_port);
+  }
 
   return (0);
 }
