@@ -93,6 +93,65 @@ screen_cleanup(void)
   CloseWindow(mywindow);
 }
 
+static void
+draw_cursor(bool do_xor)
+{
+	short cx, cy;
+	const short xmax = mywindow->Width;
+	const short ymax = mywindow->Height;
+
+	if (screen_x > xmax) {
+		return;
+	}
+	if (screen_y > ymax) {
+		return;
+	}
+
+	/* cursor - at next position? Why, this seems just annoying */
+	if (screen_x > (xmax - 31)) {
+		cx = 9;
+		cy = screen_y + 8;
+	} else {
+		cx = screen_x + 8;
+		cy = screen_y;
+	}
+	if (cy > (ymax - 2)) {
+		cx = 9;
+		cy -= 8;
+	}
+
+	if (do_xor) {
+		/* XOR bits into raster, so we can see "through" the cursor */
+		SetDrMd(mywindow->RPort, COMPLEMENT);
+	}
+
+	/* Cursor */
+	SetAPen(mywindow->RPort, 3);
+	RectFill(mywindow->RPort, cx - 7, cy - 6, cx, cy + 1);
+	SetAPen(mywindow->RPort, 1);
+
+	if (do_xor) {
+		/* Draw both foreground/background colours into raster */
+		SetDrMd(mywindow->RPort, JAM2);
+	}
+}
+
+void
+screen_wrap_line(void)
+{
+	const short xmax = mywindow->Width;
+	const short ymax = mywindow->Height;
+
+	/* Handle wrapping at edge of window */
+	if (screen_x > (xmax - 31)) {
+		screen_x = 3;
+		screen_y += 8;
+	}
+	if (screen_y > (ymax - 2)) {
+		screen_x = 3;
+		screen_y -= 8;
+	}
+}
 
 /*
  * Display ASCII characters, don't draw the cursor.
@@ -104,41 +163,11 @@ static void _emit(char c) {
   xmax = mywindow->Width;
   ymax = mywindow->Height;
 
-  /* cursor */
-  if (screen_x > (xmax - 31)) {
-    cx = 9;
-    cy = screen_y + 8;
-  } else {
-    cx = screen_x + 8;
-    cy = screen_y;
-  }
-  if (cy > (ymax - 2)) {
-    cx = 9;
-    cy -= 8;
-  }
+  /* Update the current screen x/y if need to wrap */
+  screen_wrap_line();
 
-#if 1
-  /* XOR bits into raster */
-  SetDrMd(mywindow->RPort, COMPLEMENT);
-
-  /* Cursor */
-  SetAPen(mywindow->RPort, 3);
-  RectFill(mywindow->RPort, cx - 7, cy - 6, cx, cy + 1);
-  SetAPen(mywindow->RPort, 1);
-
-  /* 2 colours? Or planes? Into raster */
-  SetDrMd(mywindow->RPort, JAM2);
-#endif
-
-  if (screen_x > (xmax - 31)) {
-    screen_x = 3;
-    screen_y += 8;
-  }
-  if (screen_y > (ymax - 2)) {
-    screen_x = 3;
-    screen_y -= 8;
-  }
   Move(mywindow->RPort, screen_x, screen_y);
+
   switch (c) {
   case '\t':
     screen_x += 60;
@@ -157,20 +186,34 @@ static void _emit(char c) {
   case 12: /* page */
     screen_x = 3;
     screen_y = 17;
+
+    /*
+     * Blank the screen; note that I THINK this makes hard-coded assumptions
+     * about the menu and window decoration size!
+     */
     SetAPen(mywindow->RPort, 0);
     RectFill(mywindow->RPort, 2, 10, xmax - 19, ymax - 7);
     SetAPen(mywindow->RPort, 1);
+
     break;
-  case 7: /* bell */
+  case 7: /* bell - flash the screen */
     ClipBlit(mywindow->RPort, 0, 0, mywindow->RPort, 0, 0, xmax, ymax, 0x50);
     ClipBlit(mywindow->RPort, 0, 0, mywindow->RPort, 0, 0, xmax, ymax, 0x50);
     break;
   default:
+    /* Write the character; advance screen position */
     Text(mywindow->RPort, (UBYTE *)&c, 1);
     screen_x += 8;
   } /* end of switch */
 
-  /* advance cursor, scroll if needed */
+  /*
+   * if the cursor is off screen then next line; scroll if needed.
+   *
+   * Note that for some reason it's not wrapping screen_x here
+   * but it IS wrapping the cursor position; the next trip through
+   * _emit() will wrap the screen x/y position and draw the XOR
+   * cursor in the next location.
+   */
   if (screen_x > (xmax - 31)) {
     cx = 9;
     cy = screen_y + 8;
@@ -181,17 +224,14 @@ static void _emit(char c) {
   if (cy > (ymax - 2)) {
     cx = 9;
     cy -= 8;
+    /* Scroll! */
     ScrollRaster(mywindow->RPort, 0, 8, 2, 10, xmax - 20, ymax - 2);
   }
 
   (void) cx; (void) cy;
 
-#if 1
-  /* Draw cursor */
-  SetAPen(mywindow->RPort, 3);
-  RectFill(mywindow->RPort, cx - 7, cy - 6, cx, cy + 1);
-  SetAPen(mywindow->RPort, 1);
-#endif
+  /* Wrap current x/y if required */
+  screen_wrap_line();
 
 }
 
@@ -201,12 +241,15 @@ static void _emit(char c) {
 void
 emit(char c)
 {
+  /* XOR cursor */
+  draw_cursor(true);
 
-  /* Normal plotting */
+  /* Normal plotting - foreground + background */
   SetDrMd(mywindow->RPort, JAM2);
   _emit(c);
 
-  /* XXX draw cursor */
+  /* draw cursor */
+  draw_cursor(false);
 }
 
 /*
@@ -219,16 +262,20 @@ emits(const char *str)
   char c;
   i = 0;
 
-  /* Normal plotting */
+  /* XOR cursor */
+  draw_cursor(true);
+
+  /* Normal plotting - foreground + background */
   SetDrMd(mywindow->RPort, JAM2);
 
   while (str[i] != 0) {
     c = str[i];
     if (c == 10)
       c = 13;
-    emit(c);
+    _emit(c);
     i += 1;
   }
 
-  /* XXX draw cursor */
+  /* draw cursor */
+  draw_cursor(false);
 }
