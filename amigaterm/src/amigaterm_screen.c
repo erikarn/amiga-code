@@ -28,13 +28,12 @@
 
 #include "amigaterm_screen.h"
 
-
 #define INTUITION_REV 1
 #define GRAPHICS_REV 1
 
 /*   Intuition always wants to see these declarations */
-struct IntuitionBase *IntuitionBase;
-struct GfxBase *GfxBase;
+struct IntuitionBase *IntuitionBase = NULL;
+struct GfxBase *GfxBase = NULL;
 
 /* my window structure */
 struct NewWindow NewWindow = {
@@ -60,8 +59,136 @@ struct NewWindow NewWindow = {
 };
 struct Window *mywindow;         /* ptr to applications window */
 
-static short screen_x = 3;
-static short screen_y = 17;
+struct amigaterm_screen {
+  short font_height, font_width, font_baseline; // pixels
+  short tab_width; // characters
+  short cursor_x, cursor_y; // current character x/y position
+  short scr_width, scr_height; // current width/height in characters
+};
+
+struct amigaterm_screen a_screen;
+
+/*
+ * Get the cursor in the window pixel coordinates.
+ */
+static void
+screen_get_cursor_xy(short *x, short *y)
+{
+	if (x != NULL) {
+		*x = a_screen.cursor_x * a_screen.font_width;
+		*x += mywindow->BorderLeft;
+	}
+	if (y != NULL) {
+		*y = a_screen.cursor_y * a_screen.font_height;
+		*y += mywindow->BorderTop;
+	}
+}
+
+/*
+ * Update the cursor position; do bounds check.
+ */
+static void
+screen_set_cursor(short x, short y)
+{
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+
+	if (x >= a_screen.scr_width)
+		x = a_screen.scr_width - 1;
+
+	if (y >= a_screen.scr_height)
+		y = a_screen.scr_height - 1;
+
+	a_screen.cursor_x = x;
+	a_screen.cursor_y = y;
+}
+
+/*
+ * Advance the cursor.  Optionally wrap or stay at the end.
+ *
+ * Returns true if we need to scroll the screen up (ie, we
+ * hit the last character on the last line, and we're not
+ * wrapping.)
+ */
+static bool
+screen_advance_cursor(short num_char, bool do_wrap)
+{
+	bool do_y = false;
+	bool ret = false;
+
+	/* Advance cursor, wrap at x */
+	a_screen.cursor_x += num_char;
+	if (a_screen.cursor_x >= a_screen.scr_width) {
+		if (do_wrap) {
+			a_screen.cursor_x %= a_screen.scr_width;
+			do_y = true;
+		} else {
+			a_screen.cursor_x = a_screen.scr_width - 1;
+		}
+	}
+
+	/* Check if we need to advance y now */
+	if (do_y == true) {
+		a_screen.cursor_y += 1;
+		if (a_screen.cursor_y >= a_screen.scr_height) {
+			a_screen.cursor_y = a_screen.scr_height - 1;
+			ret = true;
+		}
+	}
+	return ret;
+}
+
+/* Advance to next line; code dupe with above */
+static bool
+screen_advance_line(void)
+{
+	bool ret = 0;
+
+	a_screen.cursor_x = 0;
+	a_screen.cursor_y++;
+	if (a_screen.cursor_y >= a_screen.scr_height) {
+		a_screen.cursor_y = a_screen.scr_height - 1;
+		ret = true;
+	}
+
+	return ret;
+}
+
+/*
+ * Calculate the maximum screen dimensions for the text area.
+ *
+ * This needs to be re-calculated every time the screen is resized.
+ */
+static void
+screen_init_dimensions(void)
+{
+	/* These are in pixels */
+	a_screen.scr_width =
+	    mywindow->Width - (mywindow->BorderLeft + mywindow->BorderRight);
+	a_screen.scr_height =
+	    mywindow->Height - (mywindow->BorderTop + mywindow->BorderBottom);
+
+	/* Now convert to characters */
+	a_screen.scr_width /= a_screen.font_width;
+	a_screen.scr_height /= a_screen.font_height;
+
+	printf("%s: width=%d, height=%d\n", __func__,
+	    a_screen.scr_width, a_screen.scr_height);
+}
+
+/*
+ * Read the system font parameters for the given window.
+ */
+static void
+screen_read_system_font(void)
+{
+
+  a_screen.font_height = mywindow->RPort->Font->tf_YSize;
+  a_screen.font_width = mywindow->RPort->Font->tf_XSize;
+  a_screen.font_baseline = mywindow->RPort->Font->tf_Baseline;
+}
 
 int
 screen_init(void)
@@ -71,86 +198,80 @@ screen_init(void)
       (CONST_STRPTR) "intuition.library", INTUITION_REV);
   if (IntuitionBase == NULL) {
     puts("Can't open intuition library\n");
-    exit(TRUE);
+    goto error;
   }
   GfxBase = (struct GfxBase *)OpenLibrary((CONST_STRPTR) "graphics.library",
                                           GRAPHICS_REV);
   if (GfxBase == NULL) {
     puts("Can't open graphics library\n");
-    exit(TRUE);
-  }
-  if ((mywindow = (struct Window *)OpenWindow(&NewWindow)) == NULL) {
-    puts("Can't open window\n");
-    exit(TRUE);
+    goto error;
   }
 
+  if ((mywindow = (struct Window *)OpenWindow(&NewWindow)) == NULL) {
+    puts("Can't open window\n");
+    goto error;
+  }
+
+  /*
+   * Initialise the system font paramters.
+   */
+  screen_read_system_font();
+
+  /* Default to 8 character tab */
+  a_screen.tab_width = 8;
+
+  a_screen.cursor_x = a_screen.cursor_y = 0;
+
+  screen_init_dimensions();
+
   return (1);
+error:
+  if (GfxBase != NULL)
+    CloseLibrary((struct Library *) GfxBase);
+  if (IntuitionBase != NULL)
+    CloseLibrary((struct Library *) IntuitionBase);
+  exit(TRUE);
 }
 
 void
 screen_cleanup(void)
 {
   CloseWindow(mywindow);
+
+  if (GfxBase != NULL)
+    CloseLibrary((struct Library *) GfxBase);
+  if (IntuitionBase != NULL)
+    CloseLibrary((struct Library *) IntuitionBase);
 }
 
 static void
 draw_cursor(bool do_xor)
 {
 	short cx, cy;
-	const short xmax = mywindow->Width;
-	const short ymax = mywindow->Height;
 
-	if (screen_x > xmax) {
-		return;
-	}
-	if (screen_y > ymax) {
-		return;
-	}
+	screen_get_cursor_xy(&cx, &cy);
+	SetDrMd(mywindow->RPort, JAM2);
 
-	/* cursor - at next position? Why, this seems just annoying */
-	if (screen_x > (xmax - 31)) {
-		cx = 9;
-		cy = screen_y + 8;
-	} else {
-		cx = screen_x + 8;
-		cy = screen_y;
-	}
-	if (cy > (ymax - 2)) {
-		cx = 9;
-		cy -= 8;
-	}
-
-	if (do_xor) {
-		/* XOR bits into raster, so we can see "through" the cursor */
-		SetDrMd(mywindow->RPort, COMPLEMENT);
-	}
-
-	/* Cursor */
 	SetAPen(mywindow->RPort, 3);
-	RectFill(mywindow->RPort, cx - 7, cy - 6, cx, cy + 1);
+	RectFill(mywindow->RPort, cx, cy,
+	    cx + a_screen.font_width, cy + a_screen.font_height);
 	SetAPen(mywindow->RPort, 1);
-
-	if (do_xor) {
-		/* Draw both foreground/background colours into raster */
-		SetDrMd(mywindow->RPort, JAM2);
-	}
 }
 
-void
-screen_wrap_line(void)
+/*
+ * Draw a character at the current location.  Don't advance the
+ * cursor.
+ */
+static void
+screen_draw_char(char c)
 {
-	const short xmax = mywindow->Width;
-	const short ymax = mywindow->Height;
+	short cx, cy;
 
-	/* Handle wrapping at edge of window */
-	if (screen_x > (xmax - 31)) {
-		screen_x = 3;
-		screen_y += 8;
-	}
-	if (screen_y > (ymax - 2)) {
-		screen_x = 3;
-		screen_y -= 8;
-	}
+	screen_get_cursor_xy(&cx, &cy);
+
+	Move(mywindow->RPort, cx, cy + a_screen.font_baseline);
+
+	Text(mywindow->RPort, (UBYTE *)&c, 1);
 }
 
 /*
@@ -158,38 +279,34 @@ screen_wrap_line(void)
  */
 static void _emit(char c) {
   short xmax, ymax;
-  short cx, cy;
+
+  bool do_scroll = false;
 
   xmax = mywindow->Width;
   ymax = mywindow->Height;
 
-  /* Update the current screen x/y if need to wrap */
-  screen_wrap_line();
-
-  Move(mywindow->RPort, screen_x, screen_y);
-
   switch (c) {
   case '\t':
-    screen_x += 60;
+    screen_advance_cursor(8, false); // tabstop 8, don't advance lines */
     break;
   case '\n':
     break;
   case 13: /* newline */
-    screen_x = 3;
-    screen_y += 8;
+    do_scroll = screen_advance_line();
     break;
   case 8: /* backspace */
-    screen_x -= 8;
-    if (screen_x < 3)
-      screen_x = 3;
+    screen_set_cursor(a_screen.cursor_x - 1, a_screen.cursor_y);
     break;
-  case 12: /* page */
-    screen_x = 3;
-    screen_y = 17;
+  case 12: /* page, also newsize message, so read the config */
+    screen_read_system_font();
+    screen_init_dimensions();
+    screen_set_cursor(0, 0);
 
     /*
      * Blank the screen; note that I THINK this makes hard-coded assumptions
      * about the menu and window decoration size!
+     *
+     * XXX TODO: remove hard-coded assumptions!
      */
     SetAPen(mywindow->RPort, 0);
     RectFill(mywindow->RPort, 2, 10, xmax - 19, ymax - 7);
@@ -202,8 +319,9 @@ static void _emit(char c) {
     break;
   default:
     /* Write the character; advance screen position */
-    Text(mywindow->RPort, (UBYTE *)&c, 1);
-    screen_x += 8;
+    screen_draw_char(c);
+    do_scroll = screen_advance_cursor(1, true); /* next line if needed */
+    break;
   } /* end of switch */
 
   /*
@@ -214,25 +332,10 @@ static void _emit(char c) {
    * _emit() will wrap the screen x/y position and draw the XOR
    * cursor in the next location.
    */
-  if (screen_x > (xmax - 31)) {
-    cx = 9;
-    cy = screen_y + 8;
-  } else {
-    cx = screen_x + 8;
-    cy = screen_y;
-  }
-  if (cy > (ymax - 2)) {
-    cx = 9;
-    cy -= 8;
-    /* Scroll! */
+  if (do_scroll) {
+    /* XXX again, hard-coded */
     ScrollRaster(mywindow->RPort, 0, 8, 2, 10, xmax - 20, ymax - 2);
   }
-
-  (void) cx; (void) cy;
-
-  /* Wrap current x/y if required */
-  screen_wrap_line();
-
 }
 
 /*
