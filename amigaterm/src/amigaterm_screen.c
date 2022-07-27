@@ -188,6 +188,11 @@ screen_read_system_font(void)
   a_screen.font_height = mywindow->RPort->Font->tf_YSize;
   a_screen.font_width = mywindow->RPort->Font->tf_XSize;
   a_screen.font_baseline = mywindow->RPort->Font->tf_Baseline;
+
+  printf("%s: font: height %d width %d baseline %d\n",
+    __func__, a_screen.font_height,
+    a_screen.font_width,
+    a_screen.font_baseline);
 }
 
 int
@@ -254,7 +259,7 @@ draw_cursor(bool do_xor)
 
 	SetAPen(mywindow->RPort, 3);
 	RectFill(mywindow->RPort, cx, cy,
-	    cx + a_screen.font_width, cy + a_screen.font_height);
+	    cx + a_screen.font_width - 1, cy + a_screen.font_height - 1);
 	SetAPen(mywindow->RPort, 1);
 }
 
