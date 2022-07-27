@@ -305,7 +305,7 @@ int main() {
         }
         break;
       case NEWSIZE:
-        emit(12);
+        emit(12); // XXX hack, but hey
         break;
       case MENUPICK:
         if (code != MENUNULL) {
