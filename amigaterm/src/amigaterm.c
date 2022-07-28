@@ -286,9 +286,11 @@ int main() {
         /*  User has touched the keyboard */
         switch (code) {
         case 95: /* help key */
-          emits("AMIGA Term Enhanced 2018-2021 by Roc Vall\xe8s Dom\xe8nech\n");
           emits("AMIGA Term Copyright 1985 by Michael Mounier\n");
+          emits("AMIGA Term Enhanced 2018-2021 by Roc Vall\xe8s Dom\xe8nech\n");
           emits("Contributors: Alexander Fritsch (2021)\n");
+          emits("Contributors: Adrian Chadd (2022)\n");
+          emits("More info: https://github.com/erikarn/amiga-code/amigaterm/\n");
 #if ENABLE_HWFLOW
           emits("***This program is configured to USE HW flow control\n");
 #else
