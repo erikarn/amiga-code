@@ -249,18 +249,23 @@ screen_cleanup(void)
     CloseLibrary((struct Library *) IntuitionBase);
 }
 
-static void
-draw_cursor(bool do_xor)
+/*
+ * Draw the cursor at the current cursor location.
+ *
+ * This doesn't set the draw mode; instead that is done by
+ * the caller.
+ */
+extern void
+draw_cursor(void)
 {
 	short cx, cy;
 
 	screen_get_cursor_xy(&cx, &cy);
-	SetDrMd(mywindow->RPort, JAM2);
 
-	SetAPen(mywindow->RPort, 3);
+	SetAPen(mywindow->RPort, AMIGATERM_SCREEN_CURSOR_PEN);
 	RectFill(mywindow->RPort, cx, cy,
 	    cx + a_screen.font_width - 1, cy + a_screen.font_height - 1);
-	SetAPen(mywindow->RPort, 1);
+	SetAPen(mywindow->RPort, AMIGATERM_SCREEN_TEXT_PEN);
 }
 
 /*
@@ -280,9 +285,15 @@ screen_draw_char(char c)
 }
 
 /*
- * Display ASCII characters, don't draw the cursor.
+ * Display an ASCII character and do basic terminal emulation.
+ *
+ * This doesn't draw the cursor, but it does update the
+ * current cursor position for when it's time to update the
+ * cursor.
  */
-static void _emit(char c) {
+static void
+_emit(char c)
+{
   short xmax, ymax;
 
   bool do_scroll = false;
@@ -313,9 +324,9 @@ static void _emit(char c) {
      *
      * XXX TODO: remove hard-coded assumptions!
      */
-    SetAPen(mywindow->RPort, 0);
+    SetAPen(mywindow->RPort, AMIGATERM_SCREEN_BACKGROUND_PEN);
     RectFill(mywindow->RPort, 2, 10, xmax - 19, ymax - 7);
-    SetAPen(mywindow->RPort, 1);
+    SetAPen(mywindow->RPort, AMIGATERM_SCREEN_TEXT_PEN);
 
     break;
   case 7: /* bell - flash the screen */
@@ -345,23 +356,30 @@ static void _emit(char c) {
 
 /*
  * Echo a single character.
+ *
+ * Updates the cursor each character.
  */
 void
 emit(char c)
 {
+
   /* XOR cursor */
-  draw_cursor(true);
+  SetDrMd(mywindow->RPort, COMPLEMENT);
+  draw_cursor();
 
   /* Normal plotting - foreground + background */
   SetDrMd(mywindow->RPort, JAM2);
   _emit(c);
 
   /* draw cursor */
-  draw_cursor(false);
+  draw_cursor();
 }
 
 /*
  * Echo a string.
+ *
+ * Only emit a cursor update before and after the string
+ * is echoed.
  */
 void
 emits(const char *str)
@@ -371,7 +389,8 @@ emits(const char *str)
   i = 0;
 
   /* XOR cursor */
-  draw_cursor(true);
+  SetDrMd(mywindow->RPort, COMPLEMENT);
+  draw_cursor();
 
   /* Normal plotting - foreground + background */
   SetDrMd(mywindow->RPort, JAM2);
@@ -385,5 +404,5 @@ emits(const char *str)
   }
 
   /* draw cursor */
-  draw_cursor(false);
+  draw_cursor();
 }
