@@ -240,6 +240,9 @@ int main() {
      * So skip the Wait().
      */
     if (serial_read_is_ready() == 0) {
+      draw_cursor(AMIGATERM_SCREEN_CURSOR_PEN, false); // Note: no XOR here
+      // XXX TODO: we need to track this and blank/XOR the cursor out if
+      // we've drawn it here, or we'll end up with cursor artefacts everywhere!
       Wait((serial_get_read_signal_bitmask()) |
            (1 << mywindow->UserPort->mp_SigBit));
     }

@@ -13,4 +13,6 @@ extern	void screen_cleanup(void);
 extern	void emits(const char *str);
 extern	void emit(char c);
 
+extern	void draw_cursor(char pen, bool do_xor);
+
 #endif

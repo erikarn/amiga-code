@@ -251,21 +251,26 @@ screen_cleanup(void)
 
 /*
  * Draw the cursor at the current cursor location.
- *
- * This doesn't set the draw mode; instead that is done by
- * the caller.
  */
-extern void
-draw_cursor(void)
+void
+draw_cursor(char pen, bool do_xor)
 {
 	short cx, cy;
 
 	screen_get_cursor_xy(&cx, &cy);
+	if (do_xor) {
+		SetDrMd(mywindow->RPort, COMPLEMENT);
+	}
 
-	SetAPen(mywindow->RPort, AMIGATERM_SCREEN_CURSOR_PEN);
+	SetAPen(mywindow->RPort, pen);
 	RectFill(mywindow->RPort, cx, cy,
 	    cx + a_screen.font_width - 1, cy + a_screen.font_height - 1);
 	SetAPen(mywindow->RPort, AMIGATERM_SCREEN_TEXT_PEN);
+
+	if (do_xor) {
+		SetDrMd(mywindow->RPort, JAM2);
+	}
+
 }
 
 /*
@@ -363,16 +368,15 @@ void
 emit(char c)
 {
 
-  /* XOR cursor */
-  SetDrMd(mywindow->RPort, COMPLEMENT);
-  draw_cursor();
+  /* Clear cursor */
+//  draw_cursor(AMIGATERM_SCREEN_BACKGROUND_PEN, false);
 
   /* Normal plotting - foreground + background */
   SetDrMd(mywindow->RPort, JAM2);
   _emit(c);
 
   /* draw cursor */
-  draw_cursor();
+//  draw_cursor(AMIGATERM_SCREEN_CURSOR_PEN, false);
 }
 
 /*
@@ -389,8 +393,8 @@ emits(const char *str)
   i = 0;
 
   /* XOR cursor */
-  SetDrMd(mywindow->RPort, COMPLEMENT);
-  draw_cursor();
+  //SetDrMd(mywindow->RPort, COMPLEMENT);
+  draw_cursor(AMIGATERM_SCREEN_BACKGROUND_PEN, false);
 
   /* Normal plotting - foreground + background */
   SetDrMd(mywindow->RPort, JAM2);
@@ -404,5 +408,5 @@ emits(const char *str)
   }
 
   /* draw cursor */
-  draw_cursor();
+  draw_cursor(AMIGATERM_SCREEN_CURSOR_PEN, false);
 }
