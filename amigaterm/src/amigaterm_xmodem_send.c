@@ -22,7 +22,7 @@
 
 #include "amigaterm_serial.h"
 #include "amigaterm_serial_read.h"
-#include "amigaterm_timer.h"
+#include "../lib/timer/timer.h"
 #include "amigaterm_util.h"
 #include "amigaterm_xmodem.h"
 

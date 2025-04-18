@@ -1,5 +1,5 @@
-#ifndef __AMIGATERM_TIMER_H__
-#define __AMIGATERM_TIMER_H__
+#ifndef __TIMER_H__
+#define __TIMER_H__
 
 extern int timer_init(void);
 extern void timer_close(void);

@@ -1,3 +1,10 @@
+/*
+ * Timer abstractions
+ *
+ * Adrian Chadd <adrian@FreeBSD.org>, 2022-2025.
+ */
+
+/* Original amigaterm copyright follows */
 /************************************************************************
  *  a terminal program that has ascii and xmodem transfer capability
  *
@@ -20,9 +27,9 @@
 #include "exec/types.h"           // for FALSE, TRUE, UBYTE, CONST_STRPTR
 #include <stdio.h>                // for NULL, puts, fclose, fopen, EOF, getc
 
-#include "amigaterm_timer.h"
+#include "timer.h"
 
-struct Device * TimerBase;
+static struct Device * TimerBase;
 static struct timerequest *timer_req;
 static int pending_timer = 0;
 static struct MsgPort *timer_port;
